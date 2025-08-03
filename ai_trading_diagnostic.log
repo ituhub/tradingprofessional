@@ -1,0 +1,11 @@
+2025-08-02 07:58:26,587 - INFO - Loaded config from models\^GSPC_config.pkl
+2025-08-02 07:58:26,681 - INFO - Loaded scaler from models\^GSPC_scaler.pkl
+2025-08-02 07:58:34,395 - WARNING - Error loading xgboost: Can't get attribute 'XGBoostTimeSeriesModel' on <module '__main__' from 'C:\\Users\\Nicuma\\Downloads\\newprogtra\\diagnostic.py'>
+2025-08-02 07:58:34,442 - WARNING - Error loading sklearn_ensemble: Can't get attribute 'SklearnEnsemble' on <module '__main__' from 'C:\\Users\\Nicuma\\Downloads\\newprogtra\\diagnostic.py'>
+2025-08-02 07:58:34,442 - INFO - Loaded 6 models for ^GSPC
+2025-08-02 07:58:35,168 - INFO - Fetching REAL-TIME data for ^GSPC (timeframe: 1d)
+2025-08-02 07:58:38,024 - INFO - Enhanced features: 91 columns, 365 rows
+2025-08-02 07:58:44,409 - INFO - Loaded 0 models for AAPL
+2025-08-02 07:58:44,409 - ERROR - No models available for AAPL
+2025-08-02 07:58:44,425 - INFO - Loaded 0 models for GOOGL
+2025-08-02 07:58:44,425 - ERROR - No models available for GOOGL

@@ -1,0 +1,57 @@
+streamlit
+pandas
+numpy
+plotly
+requests
+prophet
+scikit-learn
+xgboost
+deap
+scikit-optimize
+textblob
+torch
+joblib
+transformers
+keras-tuner
+matplotlib
+stable-baselines3
+streamlit-option-menu
+ta
+schedule
+shap
+vaderSentiment
+pytrends
+scipy
+python-dotenv
+gym
+nicegui
+nltk
+websockets
+aiohttp
+python-multipart
+fredapi
+python-dateutil
+
+# NiceGUI core dependencies
+fastapi
+uvicorn
+starlette
+vbuild
+
+# Optional for authentication (if you use it)
+passlib
+python-jose
+
+# Report generation packages
+reportlab
+openpyxl
+xlsxwriter
+fpdf2
+
+# Additional data processing
+tabulate
+jinja2
+
+# Enhanced visualization (optional)
+seaborn
+kaleido

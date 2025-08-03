@@ -1,0 +1,232 @@
+{
+    "timestamp": "2025-08-02T07:57:17.453916",
+    "system_checks": {
+        "file_existence": {
+            "fixedui.py": true,
+            "enhprog.py": true
+        }
+    },
+    "import_diagnostics": {
+        "get_real_time_prediction": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "train_enhanced_models": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "multi_step_forecast": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "enhanced_ensemble_predict": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "MultiTimeframeDataManager": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "RealTimeDataProcessor": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "HFFeatureCalculator": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "FMPDataProvider": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "AdvancedMarketRegimeDetector": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "AdvancedRiskManager": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "ModelExplainer": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "ModelDriftDetector": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "AdvancedBacktester": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "EnhancedStrategy": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "AdvancedTransformer": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "CNNLSTMAttention": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "EnhancedTCN": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "EnhancedInformer": {
+            "status": "IMPORTED",
+            "type": "<class 'type'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "get_asset_type": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "enhance_features": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "prepare_sequence_data": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        },
+        "is_market_open": {
+            "status": "IMPORTED",
+            "type": "<class 'function'>",
+            "module_path": "C:\\Users\\Nicuma\\Downloads\\newprogtra\\enhprog.py"
+        }
+    },
+    "feature_diagnostics": {
+        "RealPredictionEngine": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "run_real_prediction"
+            ]
+        },
+        "RealBacktestingEngine": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "run_real_backtest"
+            ]
+        },
+        "RealCrossValidationEngine": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "run_real_cross_validation"
+            ]
+        },
+        "EnhancedChartGenerator": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "create_backtest_performance_chart",
+                "create_comprehensive_prediction_chart",
+                "create_cross_validation_chart",
+                "create_drift_detection_chart",
+                "create_regime_analysis_chart"
+            ]
+        },
+        "ProfessionalSubscriptionManager": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "validate_premium_key"
+            ]
+        },
+        "AdvancedAppState": {
+            "status": "INTEGRATED",
+            "type": "<class 'type'>",
+            "methods": [
+                "get_available_models",
+                "update_subscription"
+            ]
+        }
+    },
+    "api_diagnostics": {
+        "api_keys": {
+            "FMP_API_KEY": "CONFIGURED",
+            "FRED_API_KEY": "CONFIGURED"
+        },
+        "providers_error": {
+            "status": "INITIALIZATION_FAILED",
+            "error": "FMPDataProvider.__init__() missing 1 required positional argument: 'api_key'"
+        }
+    },
+    "performance_diagnostics": {
+        "prediction_performance": {
+            "status": "COMPLETED",
+            "duration": 17.915409,
+            "result": {
+                "^GSPC": {
+                    "current_price": 6238.01,
+                    "predicted_price": 5988.4896,
+                    "confidence": 72.84526362148966
+                },
+                "AAPL": {
+                    "error": "'NoneType' object has no attribute 'get'"
+                },
+                "GOOGL": {
+                    "error": "'NoneType' object has no attribute 'get'"
+                }
+            }
+        },
+        "backtest_performance": {
+            "status": "COMPLETED",
+            "duration": 0.455083,
+            "result": {
+                "^GSPC": {
+                    "total_return": 0.0,
+                    "sharpe_ratio": 0
+                },
+                "AAPL": {
+                    "total_return": 0.0,
+                    "sharpe_ratio": 0
+                },
+                "GOOGL": {
+                    "total_return": 0.0,
+                    "sharpe_ratio": 0
+                }
+            }
+        },
+        "cross_validation_performance": {
+            "status": "COMPLETED",
+            "duration": 0.0,
+            "result": {
+                "^GSPC": {
+                    "error": "Per-column arrays must each be 1-dimensional"
+                },
+                "AAPL": {
+                    "error": "Per-column arrays must each be 1-dimensional"
+                },
+                "GOOGL": {
+                    "error": "Per-column arrays must each be 1-dimensional"
+                }
+            }
+        }
+    }
+}
