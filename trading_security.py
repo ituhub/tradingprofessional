@@ -183,110 +183,110 @@ class SecurityManager:
             return {'country': 'US', 'allowed': True}  # Default to allowed
     
     def check_access_token(self) -> bool:
-    """
-    Enhanced access token authentication with mandatory disclaimer
-    
-    Returns:
-        bool: True if authenticated and consented, False otherwise
-    """
-    if not self.config['access_tokens']['enabled']:
-        return True
-    
-    # Check if already authenticated and consented
-    if st.session_state.get('authenticated', False) and \
-       st.session_state.get('user_consented', False) and \
-       self.validate_access_token(st.session_state.get('access_token', '')):
-        return True
-    
-    # Display comprehensive disclaimer
-    st.markdown("# 🔐 AI Trading Professional - User Agreement")
-    
-    disclaimer_text = """
-    ## Important Disclaimer and Risk Warning
-
-    ### 1. Financial Risk Acknowledgement
-    - Trading financial instruments involves significant risk of loss
-    - You may lose more than your initial investment
-    - Past performance does not guarantee future results
-    - This AI system provides predictive insights, NOT guaranteed profits
-
-    ### 2. AI Prediction Limitations
-    - AI predictions are probabilistic estimates, NOT absolute guarantees
-    - Predictions can be incorrect or misleading
-    - Market conditions can change rapidly
-    - Always conduct your own research and due diligence
-
-    ### 3. Usage Terms
-    - This is a professional tool for informed traders
-    - Do not make trading decisions based solely on AI predictions
-    - Verify all information independently
-    - Understand and manage your own risk
-
-    ### 4. Data and Privacy
-    - Your usage data may be logged for system improvement
-    - No personal financial information is stored
-    - Anonymous usage tracking is performed
-
-    ### 5. Regulatory Compliance
-    - You are responsible for ensuring compliance with local trading regulations
-    - This tool is not a substitute for professional financial advice
-    - Consult with a licensed financial advisor
-
-    ### 6. Subscription and Access
-    - Access is subject to our terms of service
-    - Misuse can result in immediate account termination
-    - Tokens are non-transferable and have usage limits
-
-    **By clicking "I Consent", you acknowledge that you have read, 
-    understood, and agree to these terms.**
-    """
-    
-    # Display disclaimer in an expander for better readability
-    with st.expander("📜 Read Full Disclaimer (IMPORTANT)", expanded=True):
-        st.markdown(disclaimer_text)
-    
-    # Consent buttons
-    consent_cols = st.columns(2)
-    
-    with consent_cols[0]:
-        consent_button = st.button("✅ I Consent", type="primary", key="consent_button")
-    
-    with consent_cols[1]:
-        decline_button = st.button("❌ I Do Not Consent", type="secondary", key="decline_button")
-    
-    # Handle button actions
-    if consent_button:
-        # Prompt for access token
-        st.markdown("### 🔐 Access Token Required")
-        st.info("Please enter your access token to continue")
+        """
+        Enhanced access token authentication with mandatory disclaimer
         
-        token_input = st.text_input(
-            "Access Token",
-            type="password",
-            placeholder="Enter your access token",
-            help="Contact administrator for access token"
-        )
+        Returns:
+            bool: True if authenticated and consented, False otherwise
+        """
+        if not self.config['access_tokens']['enabled']:
+            return True
         
-        if st.button("🚀 Authenticate", type="primary"):
-            if self.validate_access_token(token_input):
-                st.session_state.access_token = token_input
-                st.session_state.authenticated = True
-                st.session_state.user_consented = True
-                st.success("✅ Authentication successful!")
-                time.sleep(1)
-                st.rerun()
-                return True
-            else:
-                st.error("❌ Invalid access token")
-                return False
-    
-    elif decline_button:
-        st.error("❌ Access Denied: User did not consent to terms")
-        st.warning("You must read and consent to the disclaimer to access the AI Trading Professional system.")
+        # Check if already authenticated and consented
+        if st.session_state.get('authenticated', False) and \
+           st.session_state.get('user_consented', False) and \
+           self.validate_access_token(st.session_state.get('access_token', '')):
+            return True
+        
+        # Display comprehensive disclaimer
+        st.markdown("# 🔐 AI Trading Professional - User Agreement")
+        
+        disclaimer_text = """
+        ## Important Disclaimer and Risk Warning
+
+        ### 1. Financial Risk Acknowledgement
+        - Trading financial instruments involves significant risk of loss
+        - You may lose more than your initial investment
+        - Past performance does not guarantee future results
+        - This AI system provides predictive insights, NOT guaranteed profits
+
+        ### 2. AI Prediction Limitations
+        - AI predictions are probabilistic estimates, NOT absolute guarantees
+        - Predictions can be incorrect or misleading
+        - Market conditions can change rapidly
+        - Always conduct your own research and due diligence
+
+        ### 3. Usage Terms
+        - This is a professional tool for informed traders
+        - Do not make trading decisions based solely on AI predictions
+        - Verify all information independently
+        - Understand and manage your own risk
+
+        ### 4. Data and Privacy
+        - Your usage data may be logged for system improvement
+        - No personal financial information is stored
+        - Anonymous usage tracking is performed
+
+        ### 5. Regulatory Compliance
+        - You are responsible for ensuring compliance with local trading regulations
+        - This tool is not a substitute for professional financial advice
+        - Consult with a licensed financial advisor
+
+        ### 6. Subscription and Access
+        - Access is subject to our terms of service
+        - Misuse can result in immediate account termination
+        - Tokens are non-transferable and have usage limits
+
+        **By clicking "I Consent", you acknowledge that you have read, 
+        understood, and agree to these terms.**
+        """
+        
+        # Display disclaimer in an expander for better readability
+        with st.expander("📜 Read Full Disclaimer (IMPORTANT)", expanded=True):
+            st.markdown(disclaimer_text)
+        
+        # Consent buttons
+        consent_cols = st.columns(2)
+        
+        with consent_cols[0]:
+            consent_button = st.button("✅ I Consent", type="primary", key="consent_button")
+        
+        with consent_cols[1]:
+            decline_button = st.button("❌ I Do Not Consent", type="secondary", key="decline_button")
+        
+        # Handle button actions
+        if consent_button:
+            # Prompt for access token
+            st.markdown("### 🔐 Access Token Required")
+            st.info("Please enter your access token to continue")
+            
+            token_input = st.text_input(
+                "Access Token",
+                type="password",
+                placeholder="Enter your access token",
+                help="Contact administrator for access token"
+            )
+            
+            if st.button("🚀 Authenticate", type="primary"):
+                if self.validate_access_token(token_input):
+                    st.session_state.access_token = token_input
+                    st.session_state.authenticated = True
+                    st.session_state.user_consented = True
+                    st.success("✅ Authentication successful!")
+                    time.sleep(1)
+                    st.rerun()
+                    return True
+                else:
+                    st.error("❌ Invalid access token")
+                    return False
+        
+        elif decline_button:
+            st.error("❌ Access Denied: User did not consent to terms")
+            st.warning("You must read and consent to the disclaimer to access the AI Trading Professional system.")
+            return False
+        
+        # Default return if no action taken
         return False
-    
-    # Default return if no action taken
-    return False
     
     def validate_access_token(self, token: str) -> bool:
         """Validate access token"""
