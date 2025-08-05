@@ -36,6 +36,20 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from sklearn.preprocessing import MinMaxScaler
 
+from keep_alive import AppKeepAlive
+
+from session_state_manager import initialize_session_state, reset_session_state, update_session_state
+
+
+# Import mobile optimization modules
+from mobile_optimizations import (
+    apply_mobile_optimizations, 
+    is_mobile_device, 
+    get_device_type
+)
+from mobile_config import create_mobile_config_manager
+from mobile_performance import create_mobile_performance_optimizer
+
 
 class EnhancedAnalyticsSuite:
     """Advanced Analytics Suite with Enhanced Capabilities and Robust Simulation"""
@@ -5153,127 +5167,234 @@ def create_professional_footer():
 # =============================================================================
 
 
-def main():
-    """Enhanced main function with improved styling and full backend integration"""
+import streamlit as st
+
+def initialize_app_components():
+    """
+    Initialize core application components with error handling.
     
-    # Page configuration
+    Returns:
+        AdvancedAppState: Initialized app state object
+        AppKeepAlive: Keep-alive manager
+    """
+    try:
+        # Initialize session state
+        initialize_session_state()
+        
+        # Initialize keep-alive mechanism
+        keep_alive_manager = AppKeepAlive()
+        keep_alive_manager.start()
+        
+        # Initialize advanced app state
+        advanced_app_state = AdvancedAppState()
+        
+        return advanced_app_state, keep_alive_manager
+    
+    except Exception as e:
+        st.error(f"Initialization Error: {e}")
+        return None, None
+
+def configure_page():
+    """
+    Configure Streamlit page settings.
+    """
     st.set_page_config(
         page_title="AI Trading Professional - Enhanced",
         page_icon="🚀",
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+def create_sidebar(advanced_app_state):
+    """
+    Create the entire sidebar with all sections
     
-    # Apply enhanced styling
-    create_enhanced_dashboard_styling()
-    
-    # Initialize advanced app state
-    global advanced_app_state
-    advanced_app_state = AdvancedAppState()
-    
-    # Enhanced sidebar with premium key input and asset selection
+    Args:
+        advanced_app_state (AdvancedAppState): The advanced app state object
+    """
     with st.sidebar:
+        # Subscription Management Section
         st.header("🔑 Subscription Management")
         
         if st.session_state.subscription_tier == 'premium':
-            st.success("✅ **PREMIUM ACTIVE**")
-            st.markdown("**Features Unlocked:**")
-            features = st.session_state.subscription_info.get('features', [])
-            for feature in features[:8]:  # Show first 8 features
-                st.markdown(f"• {feature}")
-            
-            # Optional: Add a way to deactivate premium
-            if st.button("🔓 Deactivate Premium"):
-                st.session_state.subscription_tier = 'free'
-                st.session_state.premium_key = ''
-                st.session_state.subscription_info = {}
-                st.rerun()
-        
+            _create_premium_sidebar(advanced_app_state)
         else:
-            st.info("ℹ️ **FREE TIER ACTIVE**")
-            
-            premium_key = st.text_input(
-                "Enter Premium Key",
-                type="password",
-                value=st.session_state.premium_key,
-                help="Enter 'Prem246_357' for full access"
-            )
-            
-            if st.button("🚀 Activate Premium", type="primary"):
-                success = advanced_app_state.update_subscription(premium_key)
-                if success:
-                    st.success("Premium activated! Refreshing...")
-                    st.rerun()
-                else:
-                    st.error("Invalid premium key")
+            _create_free_tier_sidebar(advanced_app_state)
         
-        # Asset selection section (moved from create_enhanced_sidebar())
+        # Asset Selection Section
         st.markdown("---")
         st.header("📈 Asset Selection")
+        _create_asset_selection_sidebar()
         
-        ticker_categories = {
-            '📊 Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
-            '🛢️ Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
-            '₿ Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
-            '💱 Forex': ['USDJPY']
-        }
-        
-        category = st.selectbox(
-            "Asset Category",
-            options=list(ticker_categories.keys()),
-            key="enhanced_category_select"
-        )
-        
-        available_tickers = ticker_categories[category]
-        if st.session_state.subscription_tier == 'free':
-            available_tickers = available_tickers[:3]  # Limit for free tier
-        
-        ticker = st.selectbox(
-            "Select Asset",
-            options=available_tickers,
-            key="enhanced_ticker_select",
-            help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
-        )
-        
-        if ticker != st.session_state.selected_ticker:
-            st.session_state.selected_ticker = ticker
-        
-        # Timeframe selection
-        timeframe_options = ['1day']
-        if st.session_state.subscription_tier == 'premium':
-            timeframe_options = ['15min', '1hour', '4hour', '1day']
-        
-        timeframe = st.selectbox(
-            "Analysis Timeframe",
-            options=timeframe_options,
-            index=timeframe_options.index('1day'),
-            key="enhanced_timeframe_select"
-        )
-        
-        if timeframe != st.session_state.selected_timeframe:
-            st.session_state.selected_timeframe = timeframe
-        
-        # System statistics
+        # System Statistics Section
         st.markdown("---")
         st.header("📊 Session Statistics")
-        stats = st.session_state.session_stats
+        _create_system_statistics_sidebar()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Predictions", stats.get('predictions', 0))
-            st.metric("Models Trained", stats.get('models_trained', 0))
-        with col2:
-            st.metric("Backtests", stats.get('backtests', 0))
-            st.metric("CV Runs", stats.get('cv_runs', 0))
+        # Additional Premium Features (if applicable)
+        if st.session_state.subscription_tier == 'premium':
+            st.markdown("---")
+            st.header("🔄 Real-time Status")
+            _create_premium_realtime_status()
+
+def _create_premium_sidebar(advanced_app_state):
+    """
+    Create sidebar content for premium tier.
     
-    # Create enhanced header
-    create_bright_enhanced_header()
+    Args:
+        advanced_app_state (AdvancedAppState): The advanced app state object
+    """
+    st.success("✅ **PREMIUM ACTIVE**")
+    st.markdown("**Features Unlocked:**")
+    features = st.session_state.subscription_info.get('features', [])
+    for feature in features[:8]:  # Show first 8 features
+        st.markdown(f"• {feature}")
+    
+    # Deactivate premium button
+    if st.button("🔓 Deactivate Premium", key="deactivate_premium"):
+        st.session_state.subscription_tier = 'free'
+        st.session_state.premium_key = ''
+        st.session_state.subscription_info = {}
+        st.experimental_rerun()
+
+def _create_free_tier_sidebar(advanced_app_state):
+    """
+    Create sidebar content for free tier.
+    
+    Args:
+        advanced_app_state (AdvancedAppState): The advanced app state object
+    """
+    st.info("ℹ️ **FREE TIER ACTIVE**")
+    
+    premium_key = st.text_input(
+        "Enter Premium Key",
+        type="password",
+        value=st.session_state.premium_key,
+        key="sidebar_premium_key_input",
+        help="Enter 'Prem246_357' for full access"
+    )
+    
+    if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
+        success = advanced_app_state.update_subscription(premium_key)
+        if success:
+            st.success("Premium activated! Refreshing...")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid premium key")
+
+def _create_asset_selection_sidebar():
+    """
+    Create asset selection sidebar section.
+    """
+    ticker_categories = {
+        '📊 Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
+        '🛢️ Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
+        '₿ Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
+        '💱 Forex': ['USDJPY']
+    }
+    
+    category = st.selectbox(
+        "Asset Category",
+        options=list(ticker_categories.keys()),
+        key="enhanced_category_select"
+    )
+    
+    available_tickers = ticker_categories[category]
+    if st.session_state.subscription_tier == 'free':
+        available_tickers = available_tickers[:3]  # Limit for free tier
+    
+    ticker = st.selectbox(
+        "Select Asset",
+        options=available_tickers,
+        key="enhanced_ticker_select",
+        help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
+    )
+    
+    if ticker != st.session_state.selected_ticker:
+        st.session_state.selected_ticker = ticker
+    
+    # Timeframe selection
+    timeframe_options = ['1day']
+    if st.session_state.subscription_tier == 'premium':
+        timeframe_options = ['15min', '1hour', '4hour', '1day']
+    
+    timeframe = st.selectbox(
+        "Analysis Timeframe",
+        options=timeframe_options,
+        index=timeframe_options.index('1day'),
+        key="enhanced_timeframe_select"
+    )
+    
+    if timeframe != st.session_state.selected_timeframe:
+        st.session_state.selected_timeframe = timeframe
+
+def _create_system_statistics_sidebar():
+    """
+    Create system statistics sidebar section.
+    """
+    stats = st.session_state.session_stats
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Predictions", stats.get('predictions', 0))
+        st.metric("Models Trained", stats.get('models_trained', 0))
+    with col2:
+        st.metric("Backtests", stats.get('backtests', 0))
+        st.metric("CV Runs", stats.get('cv_runs', 0))
+
+def _create_premium_realtime_status():
+    """
+    Create real-time status section for premium users
+    """
+    last_update = st.session_state.last_update
+    if last_update:
+        time_diff = (datetime.now() - last_update).seconds
+        status = "🟢 LIVE" if time_diff < 60 else "🟡 DELAYED"
+        st.markdown(f"**Data Stream:** {status}")
+        st.markdown(f"**Last Update:** {last_update.strftime('%H:%M:%S')}")
+    else:
+        st.markdown("**Data Stream:** 🔴 OFFLINE")
+    
+    if st.button("🔄 Refresh Data"):
+        # Force data refresh
+        if BACKEND_AVAILABLE and hasattr(st.session_state, 'data_manager') and st.session_state.data_manager:
+            try:
+                ticker = st.session_state.selected_ticker
+                current_price = st.session_state.data_manager.get_real_time_price(ticker)
+                if current_price:
+                    st.session_state.real_time_prices[ticker] = current_price
+                    st.session_state.last_update = datetime.now()
+                    st.success("Data refreshed!")
+                else:
+                    st.warning("Could not retrieve current price")
+            except Exception as e:
+                st.error(f"Error refreshing data: {e}")
+        else:
+            st.warning("Backend data manager not available")
+
+def create_main_content():
+    """
+    Create the main content area with tabs and sections.
+    """
+    # Mobile and performance optimizations
+    is_mobile = is_mobile_device()
+    device_type = get_device_type()
+    
+    # Create mobile-specific managers
+    mobile_config = create_mobile_config_manager(is_mobile)
+    mobile_performance = create_mobile_performance_optimizer(is_mobile)
+    
+    # Apply mobile optimizations
+    apply_mobile_optimizations()
+    
+    # Enhanced dashboard styling
+    create_enhanced_dashboard_styling()
     
     # Main content area
     col1, col2 = st.columns([1, 4])
     
     with col2:
-        # Main content tabs
+        # Dynamically create tabs based on subscription tier
         if st.session_state.subscription_tier == 'premium':
             main_tabs = st.tabs([
                 "🎯 Prediction", 
@@ -5288,11 +5409,10 @@ def main():
                 "📊 Basic Analytics"
             ])
         
-        # Prediction tab
+        # Tab content
         with main_tabs[0]:
             create_enhanced_prediction_section()
         
-        # Analytics tab
         with main_tabs[1]:
             if st.session_state.subscription_tier == 'premium':
                 create_advanced_analytics_section()
@@ -5301,24 +5421,49 @@ def main():
         
         # Premium-only tabs
         if st.session_state.subscription_tier == 'premium':
-            # Portfolio tab
             with main_tabs[2]:
                 create_portfolio_management_section()
             
-            # Backtesting tab
             with main_tabs[3]:
                 create_backtesting_section()
             
-            # Model management tab
             with main_tabs[4]:
                 create_model_management_section()
-    
-    # Real-time data updates
-    update_real_time_data()
-    
-    # Footer
-    create_professional_footer()
+        
+        # Continuous real-time data updates
+        update_real_time_data()
+        
+        # Professional footer
+        create_professional_footer()
 
+def main():
+    """
+    Main function to orchestrate the AI Trading Professional application.
+    Handles initialization, page configuration, sidebar creation, 
+    and main content rendering.
+    """
+    # Global declaration of advanced_app_state
+    global advanced_app_state
+    
+    # Page configuration
+    configure_page()
+    
+    # Initialize core components
+    advanced_app_state, keep_alive_manager = initialize_app_components()
+    
+    # Check if initialization was successful
+    if advanced_app_state is None:
+        return
+    
+    # Create enhanced header
+    create_bright_enhanced_header()
+    
+    # Create sidebar
+    create_sidebar(advanced_app_state)
+    
+    # Create main content
+    create_main_content()
 
+# Main execution
 if __name__ == "__main__":
     main()
