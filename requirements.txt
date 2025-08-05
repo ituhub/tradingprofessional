@@ -17,6 +17,8 @@ matplotlib
 stable-baselines3
 streamlit-option-menu
 ta
+uuid
+altair
 schedule
 shap
 vaderSentiment
@@ -31,6 +33,7 @@ aiohttp
 python-multipart
 fredapi
 python-dateutil
+
 
 # NiceGUI core dependencies
 fastapi
