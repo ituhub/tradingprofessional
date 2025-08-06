@@ -5271,7 +5271,7 @@ def _create_free_tier_sidebar(advanced_app_state):
         type="password",
         value=st.session_state.premium_key,
         key="sidebar_premium_key_input",
-        help="Enter 'Prem246_357' for full access"
+        help="Enter 'Premium Key' for full access"
     )
     
     if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
