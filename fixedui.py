@@ -4073,7 +4073,7 @@ def create_basic_analytics_section():
     • ⚠️ **Advanced Risk Metrics** - VaR, Sharpe, Sortino ratios
     • 📈 **Cross-Validation** - Rigorous model validation
     
-    **Enter Premium Key: Prem246_357**
+    **Enter Premium Key: xxxxxxxxx**
     """)
 
 
