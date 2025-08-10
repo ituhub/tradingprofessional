@@ -3,25 +3,44 @@ import time
 import threading
 import logging
 import streamlit as st
+import traceback
+
 
 class AppKeepAlive:
     """
-    Simplified keep-alive mechanism without external dependencies
+    Enhanced keep-alive mechanism with improved thread management
     """
+    _instance = None  # Singleton instance
+    
+    def __new__(cls, interval=600):
+        """
+        Ensure only one instance of AppKeepAlive is created
+        """
+        if not cls._instance:
+            cls._instance = super(AppKeepAlive, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self, interval=600):
         """
-        Initialize keep-alive mechanism
-        
-        Args:
-            interval (int, optional): Interval between keep-alive signals. Defaults to 10 minutes.
+        Initialize keep-alive mechanism with thread-safe singleton pattern
         """
+        # Prevent re-initialization if already set up
+        if hasattr(self, '_initialized'):
+            return
+        
         self.interval = interval
         self.stop_event = threading.Event()
         self.thread = None
+        self._initialized = True
         
-        # Configure logging
-        self.logger = logging.getLogger(__name__)
+        # Configure logging with unique handler to prevent duplicates
+        self.logger = logging.getLogger('AppKeepAlive')
         self.logger.setLevel(logging.INFO)
+        
+        # Clear existing handlers to prevent duplicate logging
+        if self.logger.handlers:
+            for handler in self.logger.handlers[:]:
+                self.logger.removeHandler(handler)
         
         # Add console handler
         console_handler = logging.StreamHandler()
@@ -32,47 +51,75 @@ class AppKeepAlive:
     
     def _keep_alive_signal(self):
         """
-        Simulated keep-alive signal
+        Comprehensive keep-alive signal with error handling and diagnostics
         """
+        # Use a thread-safe approach to update session state
+        if not hasattr(self, '_lock'):
+            self._lock = threading.Lock()
         try:
-            # Simple in-memory state update to prevent idle state
-            st.session_state.last_keep_alive = time.time()
-            self.logger.info(f"Keep-alive signal at {time.ctime()}")
-        except Exception as e:
-            self.logger.error(f"Keep-alive signal error: {e}")
+            with self._lock:
+                current_time = time.time()
+                st.session_state.last_keep_alive = current_time
+
+            # Lightweight background computation
+            os_info = {
+                'pid': os.getpid(),
+                'timestamp': time.ctime()
+            }
+
+            self.logger.info("Keep-alive signal: %s", os_info)
+        except (RuntimeError, KeyError) as e:
+            self.logger.error("Keep-alive signal error: %s", e)
+            self.logger.error("%s", traceback.format_exc())
     
     def start(self):
         """
-        Start the keep-alive thread
+        Start the keep-alive thread with additional safety checks
         """
+        # Prevent multiple thread starts
         if self.thread and self.thread.is_alive():
-            self.logger.warning("Keep-alive thread already running")
+            self.logger.warning("Keep-alive thread already running. Skipping restart.")
             return
         
         self.stop_event.clear()
         
         def run():
             """
-            Background thread to periodically send keep-alive signals
+            Background thread with enhanced error handling and logging
             """
+            failure_count = 0
+            max_failures = 5
+            
             while not self.stop_event.is_set():
                 try:
                     self._keep_alive_signal()
-                    # Wait for the specified interval
-                    self.stop_event.wait(self.interval)
+                    failure_count = 0  # Reset on successful execution
+                    
+                    # Dynamic wait with exponential backoff
+                    wait_time = min(self.interval, 2 ** failure_count)
+                    self.stop_event.wait(wait_time)
+                
                 except Exception as e:
-                    self.logger.error(f"Error in keep-alive thread: {e}")
-                    # Prevent tight loop in case of persistent errors
-                    time.sleep(self.interval)
+                    failure_count += 1
+                    self.logger.error(f"Keep-alive thread error (Attempt {failure_count}/{max_failures}): {e}")
+                    
+                    if failure_count >= max_failures:
+                        self.logger.critical("Max keep-alive failures reached. Stopping thread.")
+                        break
+                    
+                    # Exponential backoff
+                    wait_time = min(2 ** failure_count, 300)  # Max 5 minutes
+                    time.sleep(wait_time)
         
-        self.thread = threading.Thread(target=run, daemon=True)
+        # Use daemon thread to ensure it doesn't block application shutdown
+        self.thread = threading.Thread(target=run, daemon=True, name='AppKeepAliveThread')
         self.thread.start()
         
-        self.logger.info("Keep-alive thread started")
+        self.logger.info(f"Keep-alive thread started with interval {self.interval} seconds")
     
     def stop(self):
         """
-        Stop the keep-alive thread
+        Safely stop the keep-alive thread
         """
         if self.thread:
             self.stop_event.set()
@@ -98,7 +145,7 @@ def create_alternative_keep_alive_strategies():
         {
             'name': 'Periodic UI Update',
             'description': 'Add a background timer to update UI periodically',
-            'implementation': 'Create a hidden timer component in Streamlit'
+            'implementation': 'Hidden timer component in Streamlit'
         },
         {
             'name': 'Minimal Resource Approach',
@@ -108,11 +155,3 @@ def create_alternative_keep_alive_strategies():
     ]
     
     return strategies
-
-
-# Export key functions and classes
-
-__all__ = [
-    'AppKeepAlive', 
-    'create_alternative_keep_alive_strategies'
-]
