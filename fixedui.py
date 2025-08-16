@@ -51,8 +51,7 @@ from premium_keys import (
     use_premium_prediction, 
     get_user_prediction_status,
     UserIDManager,
-    FeatureAccessControl,
-    EnvironmentAwareDatabaseManager
+    FeatureAccessControl
 )
 
 # Import mobile optimization modules
