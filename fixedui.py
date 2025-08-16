@@ -18,8 +18,8 @@ import re
 import torch
 import joblib
 import time
-import logging
 import io
+import csv
 import queue
 import traceback
 from pathlib import Path
@@ -40,8 +40,19 @@ from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
 
-from premium_keys import validate_premium_key as validate_premium_key_ext
+from riskanalysis import AdvancedRiskAnalyzer, RiskVisualization, RiskMetrics
 
+# Add this import at the top of fixedui.py
+from disclaimer import InvestmentDisclaimer, DisclaimerValidator
+
+# Import from premium_keys module
+from premium_keys import (
+    validate_premium_access, 
+    use_premium_prediction, 
+    get_user_prediction_status,
+    UserIDManager,
+    FeatureAccessControl
+)
 
 # Import mobile optimization modules
 from mobile_optimizations import (
@@ -117,6 +128,40 @@ class EnhancedAnalyticsSuite:
             }
         }
     
+    def log_prediction_usage(self, user_id: str):
+        """Log prediction usage for tracking and auditing"""
+        try:
+            # Log to standard logger
+            logger.info(f"Prediction used by User ID: {user_id}")
+            
+            # CSV Logging
+            log_dir = 'logs'
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, 'prediction_usage.csv')
+            
+            # Check if file exists, if not create with headers
+            file_exists = os.path.isfile(log_file)
+            
+            with open(log_file, 'a', newline='') as csvfile:
+                headers = ['timestamp', 'user_id', 'ticker', 'timeframe', 'models_used']
+                writer = csv.DictWriter(csvfile, fieldnames=headers)
+                
+                # Write headers if file is new
+                if not file_exists:
+                    writer.writeheader()
+                
+                # Write log entry
+                writer.writerow({
+                    'timestamp': datetime.now().isoformat(),
+                    'user_id': user_id,
+                    'ticker': st.session_state.get('selected_ticker', 'Unknown'),
+                    'timeframe': st.session_state.get('selected_timeframe', 'Unknown'),
+                    'models_used': ', '.join(st.session_state.get('selected_models', []))
+                })
+            
+        except Exception as e:
+            logger.error(f"Error logging prediction usage: {e}")
+    
     def _create_enhanced_logger(self) -> logging.Logger:
         """Create an enhanced logger with multiple handlers"""
         logger = logging.getLogger('AdvancedAnalyticsSuite')
@@ -133,6 +178,7 @@ class EnhancedAnalyticsSuite:
         logger.addHandler(console_handler)
         
         return logger
+    
     
     def run_regime_analysis(
         self, 
@@ -975,10 +1021,10 @@ class ProfessionalSubscriptionManager:
     }
     
     @staticmethod
-    def validate_premium_key(key: str) -> Dict[str, Any]:
+    def validate_premium_access(key: str) -> Dict[str, Any]:
         """Validate premium key using external validation module"""
-        # First, try external validation
-        external_validation = validate_premium_key_ext(key)
+        # First, use the validate_premium_access function from premium_keys module
+        external_validation = validate_premium_access(key)
 
         # If external validation is valid, return its result
         if external_validation['valid']:
@@ -1111,7 +1157,7 @@ class AdvancedAppState:
     
     def update_subscription(self, key: str) -> bool:
         """Enhanced subscription update with full backend initialization"""
-        validation = ProfessionalSubscriptionManager.validate_premium_key(key)
+        validation = ProfessionalSubscriptionManager.validate_premium_access(key)
         if validation['valid']:
             st.session_state.subscription_tier = validation['tier']
             st.session_state.premium_key = key
@@ -1601,18 +1647,80 @@ class RealPredictionEngine:
         ticker: str, 
         timeframe: str = '1day', 
         models: Optional[List[str]] = None
-    ) -> Dict:
-        """Run real prediction using only pre-trained models"""
+        ) -> Dict:
+        """Run real prediction with enhanced user tracking and validation"""
         try:
+            # Check if user is logged in
+            if 'user_id' not in st.session_state:
+                return {
+                    'prediction_blocked': True,
+                    'user_message': 'User ID required. Please validate your User ID in the sidebar.',
+                    'ticker': ticker,
+                    'fallback_mode': True
+                }
+            
+            user_id = st.session_state.user_id
+            
+            # Get user status and validate
+            user_status = get_user_prediction_status(user_id)
+            
+            if not user_status or not user_status.get('is_active', False):
+                return {
+                    'prediction_blocked': True,
+                    'user_message': 'User account is inactive or not found.',
+                    'ticker': ticker,
+                    'fallback_mode': True
+                }
+            
+            # Check if user has predictions remaining
+            predictions_remaining = user_status.get('predictions_remaining', 0)
+            tier = user_status.get('tier', 'free')
+            
+            if tier == 'free':
+                return {
+                    'prediction_blocked': True,
+                    'user_message': 'Free tier users cannot generate predictions. Please upgrade to a premium tier.',
+                    'ticker': ticker,
+                    'fallback_mode': True,
+                    'tier_info': {
+                        'current_tier': 'Free Tier',
+                        'upgrade_message': 'Contact admin for premium tier access'
+                    }
+                }
+            
+            if predictions_remaining <= 0:
+                reset_date = user_status.get('next_reset', 'Unknown')
+                return {
+                    'prediction_blocked': True,
+                    'user_message': f'No predictions remaining. Resets on: {reset_date}',
+                    'ticker': ticker,
+                    'fallback_mode': True,
+                    'usage_info': {
+                        'predictions_used': user_status.get('predictions_used', 0),
+                        'max_predictions': user_status.get('max_predictions', 0),
+                        'reset_date': reset_date
+                    }
+                }
+            
+            # Try to use a prediction
+            if not use_premium_prediction(user_id):
+                return {
+                    'prediction_blocked': True,
+                    'user_message': 'Failed to process prediction request. Please try again.',
+                    'ticker': ticker,
+                    'fallback_mode': True
+                }
+            
+            # Continue with existing prediction logic...
             if not BACKEND_AVAILABLE or not FMP_API_KEY:
                 logger.error("Backend not available or missing FMP API key")
                 return RealPredictionEngine._enhanced_fallback_prediction(ticker, 0)
 
-            logger.info(f"🎯 Running REAL prediction for {ticker} (timeframe: {timeframe})")
+            logger.info(f"🎯 Running REAL prediction for {ticker} (User: {user_id})")
 
             # Get real-time data
             data_manager = st.session_state.data_manager
-            current_price = data_manager.get_real_time_price(ticker)
+            current_price = data_manager.get_real_time_price(ticker) if data_manager else 0
 
             # Check if models are trained
             if not models:
@@ -1625,9 +1733,13 @@ class RealPredictionEngine:
 
             if not available_trained_models:
                 logger.warning(f"No pre-trained models available for {ticker}. Using fallback prediction.")
-                return RealPredictionEngine._enhanced_fallback_prediction(ticker, current_price)
+                # Still count as a prediction since user requested it
+                fallback_result = RealPredictionEngine._enhanced_fallback_prediction(ticker, current_price)
+                fallback_result['user_id'] = user_id
+                fallback_result['predictions_remaining'] = user_status.get('predictions_remaining', 0) - 1
+                return fallback_result
 
-            # Use only available trained models
+            # Use real backend prediction
             prediction_result = get_real_time_prediction(
                 ticker,
                 models=available_trained_models,
@@ -1635,18 +1747,102 @@ class RealPredictionEngine:
             )
 
             if prediction_result:
+                # Enhance prediction with backend features and user info
                 prediction_result = RealPredictionEngine._enhance_with_backend_features(
                     prediction_result, ticker
                 )
                 prediction_result['models_used'] = list(available_trained_models.keys())
+                prediction_result['user_id'] = user_id
+                prediction_result['predictions_remaining'] = user_status.get('predictions_remaining', 0) - 1
+                
+                logger.info(f"Prediction generated for User ID: {user_id}")
                 return prediction_result
             else:
                 logger.warning(f"Backend prediction failed for {ticker}. Using fallback.")
-                return RealPredictionEngine._enhanced_fallback_prediction(ticker, current_price)
+                fallback_result = RealPredictionEngine._enhanced_fallback_prediction(ticker, current_price)
+                fallback_result['user_id'] = user_id
+                fallback_result['predictions_remaining'] = user_status.get('predictions_remaining', 0) - 1
+                return fallback_result
 
         except Exception as e:
             logger.error(f"Error in real prediction: {e}")
             return RealPredictionEngine._enhanced_fallback_prediction(ticker, 0)
+    
+    @staticmethod
+    def _enhanced_fallback_prediction(ticker: str, current_price: float) -> Dict:
+        """Enhanced fallback with realistic constraints"""
+        try:
+            asset_type = get_asset_type(ticker)
+
+            # Asset-specific reasonable changes
+            max_changes = {
+                'crypto': 0.05,     # 5% max
+                'forex': 0.01,      # 1% max  
+                'commodity': 0.03,  # 3% max
+                'index': 0.02,      # 2% max
+                'stock': 0.04       # 4% max
+            }
+
+            max_change = max_changes.get(asset_type, 0.03)
+            change = np.random.uniform(-max_change, max_change)
+            
+            # If current_price is 0, get a reasonable price
+            if current_price == 0:
+                min_price, max_price = get_reasonable_price_range(ticker)
+                current_price = min_price + (max_price - min_price) * 0.5
+            
+            predicted_price = current_price * (1 + change)
+
+            return {
+                'ticker': ticker,
+                'asset_type': asset_type,
+                'current_price': current_price,
+                'predicted_price': predicted_price,
+                'price_change_pct': change * 100,
+                'confidence': np.random.uniform(55, 75),
+                'timestamp': datetime.now().isoformat(),
+                'fallback_mode': True,
+                'source': 'enhanced_fallback',
+                'prediction_blocked': False,
+                'user_message': 'Fallback prediction generated'
+            }
+        except Exception as e:
+            logger.error(f"Error in enhanced fallback prediction: {e}")
+            return RealPredictionEngine._basic_fallback_prediction(ticker)
+
+    @staticmethod
+    def _basic_fallback_prediction(ticker: str) -> Dict:
+        """Basic fallback prediction when everything else fails"""
+        try:
+            min_price, max_price = get_reasonable_price_range(ticker)
+            current_price = min_price + (max_price - min_price) * 0.5
+            predicted_price = current_price * np.random.uniform(0.98, 1.02)
+
+            return {
+                'ticker': ticker,
+                'current_price': current_price,
+                'predicted_price': predicted_price,
+                'price_change_pct': ((predicted_price - current_price) / current_price) * 100,
+                'confidence': 50.0,
+                'fallback_mode': True,
+                'source': 'basic_fallback',
+                'prediction_blocked': False,
+                'user_message': 'Basic prediction generated'
+            }
+        except Exception as e:
+            logger.error(f"Error in basic fallback prediction: {e}")
+            # Return absolute minimum fallback
+            return {
+                'ticker': ticker,
+                'current_price': 100.0,
+                'predicted_price': 101.0,
+                'price_change_pct': 1.0,
+                'confidence': 50.0,
+                'fallback_mode': True,
+                'source': 'emergency_fallback',
+                'prediction_blocked': False,
+                'user_message': 'Emergency fallback prediction'
+            }
     
     @staticmethod
     def _train_models_real(ticker: str) -> Tuple[Dict, Any, Dict]:
@@ -1855,28 +2051,23 @@ class RealPredictionEngine:
     
     @staticmethod
     def _get_real_risk_metrics(ticker: str) -> Dict:
-        """Get real risk metrics using AdvancedRiskManager"""
+        """Get real risk metrics using AdvancedRiskAnalyzer"""
         try:
-            risk_manager = st.session_state.risk_manager
-            data_manager = st.session_state.data_manager
+            if not hasattr(st.session_state, 'risk_analyzer'):
+                st.session_state.risk_analyzer = AdvancedRiskAnalyzer()
             
-            # Get historical data for risk calculation
+            data_manager = st.session_state.data_manager
             multi_tf_data = data_manager.fetch_multi_timeframe_data(ticker, ['1d'])
+            
             if multi_tf_data and '1d' in multi_tf_data:
-                data = multi_tf_data['1d']
+                price_data = multi_tf_data['1d']['Close'].values
+                prediction = st.session_state.current_prediction or {}
                 
-                if len(data) > 252:  # Need at least 1 year of data
-                    returns = data['Close'].pct_change().dropna()
-                    
-                    # Calculate comprehensive risk metrics
-                    risk_metrics = risk_manager.calculate_risk_metrics(returns[-252:])
-                    
-                    # Add additional risk calculations
-                    risk_metrics['portfolio_var'] = risk_manager.calculate_var(returns, method='monte_carlo')
-                    risk_metrics['expected_shortfall'] = risk_manager.calculate_expected_shortfall(returns)
-                    risk_metrics['maximum_drawdown'] = risk_manager.calculate_maximum_drawdown(returns)
-                    
-                    return risk_metrics
+                risk_metrics = st.session_state.risk_analyzer.calculate_comprehensive_risk_metrics(
+                    price_data, prediction
+                )
+                
+                return {k: getattr(risk_metrics, k) for k in risk_metrics.__annotations__}
             
             return {}
         except Exception as e:
@@ -1912,53 +2103,58 @@ class RealPredictionEngine:
         except Exception as e:
             logger.error(f"Error fetching alternative data: {e}")
             return {}
-    
-    @staticmethod
-    def _enhanced_fallback_prediction(ticker: str, current_price: float) -> Dict:
-        """Enhanced fallback with realistic constraints"""
-        asset_type = get_asset_type(ticker)
-        
-        # Asset-specific reasonable changes
-        max_changes = {
-            'crypto': 0.05,     # 5% max
-            'forex': 0.01,      # 1% max  
-            'commodity': 0.03,  # 3% max
-            'index': 0.02,      # 2% max
-            'stock': 0.04       # 4% max
-        }
-        
-        max_change = max_changes.get(asset_type, 0.03)
-        change = np.random.uniform(-max_change, max_change)
-        predicted_price = current_price * (1 + change)
-        
-        return {
-            'ticker': ticker,
-            'asset_type': asset_type,
-            'current_price': current_price,
-            'predicted_price': predicted_price,
-            'price_change_pct': change * 100,
-            'confidence': np.random.uniform(55, 75),
-            'timestamp': datetime.now().isoformat(),
-            'fallback_mode': True,
-            'source': 'enhanced_fallback'
-        }
-    
-    @staticmethod
-    def _fallback_prediction(ticker: str) -> Dict:
-        """Basic fallback prediction"""
-        min_price, max_price = get_reasonable_price_range(ticker)
-        current_price = min_price + (max_price - min_price) * 0.5
-        predicted_price = current_price * np.random.uniform(0.98, 1.02)
-        
-        return {
-            'ticker': ticker,
-            'current_price': current_price,
-            'predicted_price': predicted_price,
-            'price_change_pct': ((predicted_price - current_price) / current_price) * 100,
-            'confidence': 50.0,
-            'fallback_mode': True,
-            'source': 'basic_fallback'
-        }
+
+
+        @staticmethod
+        def _enhanced_fallback_prediction(ticker: str, current_price: float) -> Dict:
+            """Enhanced fallback with realistic constraints"""
+            asset_type = get_asset_type(ticker)
+
+            # Asset-specific reasonable changes
+            max_changes = {
+                'crypto': 0.05,     # 5% max
+                'forex': 0.01,      # 1% max  
+                'commodity': 0.03,  # 3% max
+                'index': 0.02,      # 2% max
+                'stock': 0.04       # 4% max
+            }
+
+            max_change = max_changes.get(asset_type, 0.03)
+            change = np.random.uniform(-max_change, max_change)
+            predicted_price = current_price * (1 + change)
+
+            return {
+                'ticker': ticker,
+                'asset_type': asset_type,
+                'current_price': current_price,
+                'predicted_price': predicted_price,
+                'price_change_pct': change * 100,
+                'confidence': np.random.uniform(55, 75),
+                'timestamp': datetime.now().isoformat(),
+                'fallback_mode': True,
+                'source': 'enhanced_fallback',
+                # New attributes for user tracking and limit management
+                'prediction_blocked': False,
+                'user_message': 'Fallback prediction generated'
+            }
+
+
+        @staticmethod
+        def _fallback_prediction(ticker: str) -> Dict:
+            """Basic fallback prediction"""
+            min_price, max_price = get_reasonable_price_range(ticker)
+            current_price = min_price + (max_price - min_price) * 0.5
+            predicted_price = current_price * np.random.uniform(0.98, 1.02)
+
+            return {
+                'ticker': ticker,
+                'current_price': current_price,
+                'predicted_price': predicted_price,
+                'price_change_pct': ((predicted_price - current_price) / current_price) * 100,
+                'confidence': 50.0,
+                'fallback_mode': True,
+                'source': 'basic_fallback'
+            }
 
 # =============================================================================
 # REAL BACKTESTING ENGINE
@@ -2538,159 +2734,332 @@ def create_enhanced_header():
     st.markdown("---")
 
 
-def create_enhanced_sidebar():
-    """Enhanced sidebar with full backend controls"""
+# Update the create_enhanced_sidebar function to always show asset selection
+def create_enhanced_sidebar(advanced_app_state):
+    """
+    Create an enhanced and comprehensive sidebar with disclaimer first
+    """
     with st.sidebar:
-        st.header("🔑 Subscription Management")
+        # First, check if user has consented to disclaimer
+        if not InvestmentDisclaimer.display_disclaimer():
+            # If disclaimer not consented, only show disclaimer
+            return
+        
+        # Show compact consent status
+        InvestmentDisclaimer.show_consent_status()
+        
+        # User Management and Identification Section
+        st.header("👤 User Management")
+        
+        # User ID Management - Always required now
+        if 'user_id' not in st.session_state:
+            st.warning("⚠️ User ID required for system access")
+            
+            # User ID input with validation
+            manual_id = st.text_input(
+                "Enter User ID", 
+                placeholder="USER-XXXXXXXX",
+                help="Format: USER-XXXXXXXX (Get from admin)"
+            )
+            
+            if st.button("Validate User ID", type="primary"):
+                if manual_id:
+                    try:
+                        validation = UserIDManager.validate_user_id(manual_id)
+                        if validation['valid']:
+                            st.session_state.user_id = manual_id
+                            # Get user details to set initial tier
+                            user_status = get_user_prediction_status(manual_id)
+                            if user_status and user_status.get('tier') != 'unknown':
+                                if user_status['tier'] == 'free':
+                                    st.session_state.subscription_tier = 'free'
+                                else:
+                                    st.session_state.subscription_tier = 'premium'
+                            st.success("✅ User ID validated successfully!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {validation['message']}")
+                    except Exception as e:
+                        st.error(f"❌ Validation error: {e}")
+                else:
+                    st.error("❌ Please enter a User ID")
+            
+            # Don't show other sections until user ID is validated
+            st.info("Please validate your User ID to access the trading system.")
+            return
+        
+        # Show current user info
+        st.success(f"👤 User: {st.session_state.user_id}")
+        
+        # Get current user status
+        try:
+            user_status = get_user_prediction_status(st.session_state.user_id)
+            if user_status:
+                st.info(f"🎯 Predictions: {user_status.get('predictions_remaining', 0)}/{user_status.get('max_predictions', 0)}")
+                
+                # Show tier info
+                tier_display = {
+                    'free': 'Free Tier',
+                    'tier_10': '10 Predictions',
+                    'tier_25': '25 Predictions', 
+                    'tier_50': '50 Predictions',
+                    'tier_100': '100 Predictions'
+                }.get(user_status.get('tier', 'free'), 'Unknown Tier')
+                
+                st.info(f"📊 Tier: {tier_display}")
+        except Exception as e:
+            st.error(f"Error getting user status: {e}")
+        
+        # Subscription Management Section
+        st.markdown("---")
+        st.header("🔑 Premium Access")
         
         if st.session_state.subscription_tier == 'premium':
-            st.success("✅ **PREMIUM ACTIVE**")
-            st.markdown("**Features Unlocked:**")
-            features = st.session_state.subscription_info.get('features', [])
-            for feature in features[:8]:  # Show first 8 features
-                st.markdown(f"• {feature}")
-
-            # Add an expander to show remaining features
-            if len(features) > 8:
-                with st.expander("🔓 See All Premium Features"):
-                    for feature in features[8:]:
-                       st.markdown(f"• {feature}")
-        else:
-            st.info("ℹ️ **FREE TIER ACTIVE**")
-            usage = st.session_state.daily_usage.get('predictions', 0)
-            st.markdown(f"**Daily Usage:** {usage}/10 predictions")
+            # Premium Tier Details
+            try:
+                prediction_status = get_user_prediction_status(st.session_state.user_id)
+                
+                st.success("✅ PREMIUM ACTIVE")
+                
+                # Detailed Account Metrics
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.metric(
+                        "Used", 
+                        prediction_status.get('predictions_used', 0),
+                        help="Predictions used"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Remaining", 
+                        prediction_status.get('predictions_remaining', 0),
+                        help="Predictions remaining"
+                    )
+                
+                # Reset date info
+                reset_date = prediction_status.get('next_reset', 'Unknown')
+                if reset_date != 'Unknown':
+                    try:
+                        reset_datetime = datetime.fromisoformat(reset_date.replace('Z', '+00:00'))
+                        st.info(f"🔄 Resets: {reset_datetime.strftime('%Y-%m-%d')}")
+                    except:
+                        st.info(f"🔄 Resets: {reset_date}")
+                
+                # Logout option
+                if st.button("🚪 Logout User", type="secondary"):
+                    if 'user_id' in st.session_state:
+                        del st.session_state.user_id
+                    st.session_state.subscription_tier = 'free'
+                    st.session_state.premium_key = ''
+                    st.rerun()
             
+            except Exception as e:
+                st.error(f"Error retrieving premium status: {e}")
+        
+        else:
+            # Free Tier or Upgrade Section
+            current_status = get_user_prediction_status(st.session_state.user_id)
+            
+            if current_status and current_status.get('tier') == 'free':
+                st.info("🆓 FREE TIER ACTIVE")
+                st.warning("⚠️ No predictions available in free tier")
+            else:
+                # User has premium tier but not activated
+                st.warning("🔒 PREMIUM TIER AVAILABLE")
+                st.info("Enter your premium key to activate")
+            
+            # Premium Key Input
             premium_key = st.text_input(
                 "Enter Premium Key",
                 type="password",
-                value=st.session_state.premium_key,
-                help="Enter 'Prem246_357' for full access"
+                help="Enter the premium key provided by admin"
             )
             
+            # Activation Button
             if st.button("🚀 Activate Premium", type="primary"):
-                success = advanced_app_state.update_subscription(premium_key)
-                if success:
-                    st.success("Premium activated! Refreshing...")
-                    time.sleep(1)
-                    st.rerun()
+                if premium_key:
+                    try:
+                        activation_result = validate_premium_access(
+                            user_id=st.session_state.user_id,
+                            key=premium_key
+                        )
+                        
+                        if activation_result.get('valid', False):
+                            tier = activation_result.get('tier', 'free')
+                            if tier == 'premium':
+                                st.session_state.subscription_tier = 'premium'
+                                st.session_state.premium_key = premium_key
+                                st.success("✅ Premium activated successfully!")
+                                st.rerun()
+                            else:
+                                st.session_state.subscription_tier = 'free'
+                                st.info("ℹ️ Free tier access confirmed")
+                                st.rerun()
+                        else:
+                            st.error(f"❌ {activation_result.get('message', 'Activation failed')}")
+                    except Exception as e:
+                        st.error(f"❌ Activation error: {e}")
                 else:
-                    st.error("Invalid premium key")
-        
+                    st.error("❌ Please enter a premium key")
+
+        # Asset Selection Section - ALWAYS VISIBLE
         st.markdown("---")
-        
-        # Enhanced asset selection
         st.header("📈 Asset Selection")
+        _create_asset_selection_sidebar()
         
-        ticker_categories = {
-            '📊 Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
-            '🛢️ Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
-            '₿ Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
-            '💱 Forex': ['USDJPY']
-        }
-        
-        category = st.selectbox(
-            "Asset Category",
-            options=list(ticker_categories.keys()),
-            key="enhanced_category_select"
-        )
-        
-        available_tickers = ticker_categories[category]
-        if st.session_state.subscription_tier == 'free':
-            available_tickers = available_tickers[:3]  # Limit for free tier
-        
-        ticker = st.selectbox(
-            "Select Asset",
-            options=available_tickers,
-            key="enhanced_ticker_select",
-            help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
-        )
-        
-        if ticker != st.session_state.selected_ticker:
-            st.session_state.selected_ticker = ticker
-        
-        # Timeframe selection
-        timeframe_options = ['1day']
-        if st.session_state.subscription_tier == 'premium':
-            timeframe_options = ['15min', '1hour', '4hour', '1day']
-        
-        timeframe = st.selectbox(
-            "Analysis Timeframe",
-            options=timeframe_options,
-            index=timeframe_options.index('1day'),
-            key="enhanced_timeframe_select"
-        )
-        
-        if timeframe != st.session_state.selected_timeframe:
-            st.session_state.selected_timeframe = timeframe
-        
-        # Model selection (Premium only)
-        if st.session_state.subscription_tier == 'premium':
-            st.markdown("---")
-            st.header("🤖 AI Model Configuration")
-            
-            available_models = advanced_app_state.get_available_models()
-            selected_models = st.multiselect(
-                "Select AI Models",
-                options=available_models,
-                default=available_models[:3],  # Default to first 3
-                help="Select which AI models to use for prediction"
-            )
-            st.session_state.selected_models = selected_models
-            
-            # Model training controls
-            if st.button("🔄 Train/Retrain Models", type="secondary"):
-                with st.spinner("Training AI models..."):
-                    trained_models, scaler, config = RealPredictionEngine._train_models_real(ticker)
-                    if trained_models:
-                        st.session_state.models_trained[ticker] = trained_models
-                        st.session_state.model_configs[ticker] = config
-                        st.success(f"✅ Trained {len(trained_models)} models")
-                    else:
-                        st.error("❌ Training failed")
-        
+        # Feature Access Section
         st.markdown("---")
+        st.header("📋 Available Features")
         
-        # System statistics
+        # Get features based on current user's actual tier
+        try:
+            user_status = get_user_prediction_status(st.session_state.user_id)
+            actual_tier = user_status.get('tier', 'free') if user_status else 'free'
+            features = FeatureAccessControl.get_feature_access(actual_tier)
+            
+            # Display feature summary
+            if actual_tier == 'free':
+                st.info("🆓 **FREE TIER FEATURES**")
+                st.markdown("• Asset selection and viewing")
+                st.markdown("• Basic market information")
+                st.markdown("• Limited system access")
+            else:
+                tier_names = {
+                    'tier_10': '10 Predictions Tier',
+                    'tier_25': '25 Predictions Tier',
+                    'tier_50': '50 Predictions Tier',
+                    'tier_100': '100 Predictions Tier'
+                }
+                tier_display = tier_names.get(actual_tier, 'Premium Tier')
+                st.success(f"🎯 **{tier_display.upper()}**")
+                
+                # Show key features
+                pred_features = features.get('predictions', {})
+                st.markdown(f"• {pred_features.get('models_available', 0)} AI Models")
+                st.markdown(f"• {pred_features.get('daily_predictions', 0)} Daily Predictions")
+                st.markdown(f"• {pred_features.get('prediction_horizon', 'N/A')} Forecast")
+                
+                if pred_features.get('cross_validation', False):
+                    st.markdown("• ✅ Cross-Validation")
+                if pred_features.get('model_explanations', False):
+                    st.markdown("• ✅ AI Explanations")
+                
+                analytics = features.get('analytics', {})
+                if analytics.get('sentiment_analysis', False):
+                    st.markdown("• ✅ Sentiment Analysis")
+                if analytics.get('alternative_data', False):
+                    st.markdown("• ✅ Alternative Data")
+                
+                risk_mgmt = features.get('risk_management', {})
+                if risk_mgmt.get('backtesting', False):
+                    st.markdown("• ✅ Backtesting")
+                if risk_mgmt.get('portfolio_optimization', False):
+                    st.markdown("• ✅ Portfolio Optimization")
+        
+        except Exception as e:
+            st.error(f"Error loading features: {e}")
+        
+        # System Statistics Section
+        st.markdown("---")
         st.header("📊 Session Statistics")
+        
+        # Retrieve session statistics
         stats = st.session_state.session_stats
         
+        # Create two-column layout for metrics
         col1, col2 = st.columns(2)
+        
         with col1:
             st.metric("Predictions", stats.get('predictions', 0))
-            st.metric("Models Trained", stats.get('models_trained', 0))
+            st.metric("Models Used", len(st.session_state.get('selected_models', [])))
+        
         with col2:
             st.metric("Backtests", stats.get('backtests', 0))
-            st.metric("CV Runs", stats.get('cv_runs', 0))
-        
-        # Real-time data status
-    if st.session_state.subscription_tier == 'premium':
-        st.markdown("---")
-        st.header("🔄 Real-time Status")
-        
-        last_update = st.session_state.last_update
-        if last_update:
-            time_diff = (datetime.now() - last_update).seconds
-            status = "🟢 LIVE" if time_diff < 60 else "🟡 DELAYED"
-            st.markdown(f"**Data Stream:** {status}")
-            st.markdown(f"**Last Update:** {last_update.strftime('%H:%M:%S')}")
-        else:
-            st.markdown("**Data Stream:** 🔴 OFFLINE")
-        
-        if st.button("🔄 Refresh Data"):
-            # Force data refresh
-            if BACKEND_AVAILABLE and hasattr(st.session_state, 'data_manager') and st.session_state.data_manager:
-                try:
-                    current_price = st.session_state.data_manager.get_real_time_price(ticker)
-                    if current_price:
-                        st.session_state.real_time_prices[ticker] = current_price
-                        st.session_state.last_update = datetime.now()
-                        st.success("Data refreshed!")
-                    else:
-                        st.warning("Could not retrieve current price")
-                except Exception as e:
-                    st.error(f"Error refreshing data: {e}")
-            else:
-                st.warning("Backend data manager not available")
+            st.metric("Analyses", stats.get('cv_runs', 0))
+
+        # Admin controls (for testing disclaimer)
+        if st.session_state.get('user_id', '').upper().startswith('ADMIN'):
+            st.markdown("---")
+            st.header("🛠️ Admin Controls")
+            if st.button("Reset Disclaimer", help="Reset disclaimer consent for testing"):
+                InvestmentDisclaimer.reset_consent()
+                st.warning("Disclaimer consent reset. Page will reload.")
+                st.rerun()
+
+def _create_asset_selection_sidebar():
+    """
+    Create asset selection sidebar section with robust handling.
+    Ensures asset selection is always visible regardless of tier.
+    """
+    # Ensure default ticker is set if not already present
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = '^GSPC'
+    
+    # Ensure default timeframe is set
+    if 'selected_timeframe' not in st.session_state:
+        st.session_state.selected_timeframe = '1day'
+    
+    # Define ticker categories
+    ticker_categories = {
+        'Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
+        'Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
+        'Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
+        'Forex': ['USDJPY']
+    }
+    
+    # Select category with default
+    category = st.selectbox(
+        "Asset Category",
+        options=list(ticker_categories.keys()),
+        index=0,  # Default to first category
+        key="asset_category_select_permanent"
+    )
+    
+    # Get available tickers for the selected category
+    available_tickers = ticker_categories[category]
+    
+    # For free tier, show all tickers but disable prediction functionality
+    # This allows viewing but not trading
+    
+    # Ensure current selected ticker is in available tickers
+    if st.session_state.selected_ticker not in available_tickers:
+        st.session_state.selected_ticker = available_tickers[0]
+    
+    # Ticker selection with permanent key and index based on current selection
+    ticker = st.selectbox(
+        "Select Asset",
+        options=available_tickers,
+        index=available_tickers.index(st.session_state.selected_ticker),
+        key="asset_ticker_select_permanent",
+        help=f"Asset type: {get_asset_type(available_tickers[0])}"
+    )
+    
+    # Always update selected ticker
+    st.session_state.selected_ticker = ticker
+    
+    # Timeframe selection with permanent key
+    timeframe_options = ['1day']
+    
+    # Check user's actual tier for advanced timeframes
+    try:
+        if 'user_id' in st.session_state:
+            user_status = get_user_prediction_status(st.session_state.user_id)
+            if user_status and user_status.get('tier') != 'free':
+                timeframe_options = ['15min', '1hour', '4hour', '1day']
+    except:
+        pass  # Fall back to basic timeframes
+    
+    timeframe = st.selectbox(
+        "Analysis Timeframe",
+        options=timeframe_options,
+        index=timeframe_options.index('1day') if '1day' in timeframe_options else 0,
+        key="asset_timeframe_select_permanent"
+    )
+    
+    # Always update selected timeframe
+    st.session_state.selected_timeframe = timeframe
 
 
 def create_enhanced_prediction_section():
@@ -2789,7 +3158,66 @@ def create_enhanced_prediction_section():
 
 
 def display_enhanced_prediction_results(prediction: Dict):
-    """Display comprehensive prediction results with all backend features"""
+    """Display comprehensive prediction results with user tracking"""
+    
+    # Check if prediction was blocked due to limit
+    if prediction.get('prediction_blocked', False):
+        user_message = prediction.get('user_message', 'Prediction generation blocked')
+        
+        # Show different UI based on the type of block
+        if 'Free tier users' in user_message:
+            st.error("🆓 **FREE TIER LIMITATION**")
+            st.markdown(user_message)
+            
+            tier_info = prediction.get('tier_info', {})
+            if tier_info:
+                st.info(f"**Current Tier:** {tier_info.get('current_tier', 'Unknown')}")
+                st.info(f"**Upgrade:** {tier_info.get('upgrade_message', 'Contact admin')}")
+                
+        elif 'No predictions remaining' in user_message:
+            st.error("📊 **PREDICTION LIMIT REACHED**")
+            st.markdown(user_message)
+            
+            usage_info = prediction.get('usage_info', {})
+            if usage_info:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Used", usage_info.get('predictions_used', 0))
+                with col2:
+                    st.metric("Max", usage_info.get('max_predictions', 0))
+                with col3:
+                    reset_date = usage_info.get('reset_date', 'Unknown')
+                    st.metric("Resets", reset_date[:10] if len(reset_date) > 10 else reset_date)
+        
+        elif 'User ID required' in user_message:
+            st.warning("👤 **USER ID REQUIRED**")
+            st.markdown(user_message)
+            st.info("Please enter and validate your User ID in the sidebar to access predictions.")
+            
+        else:
+            st.error("❌ **PREDICTION ERROR**")
+            st.markdown(user_message)
+        
+        return
+    
+    # Show user info if available
+    user_id = prediction.get('user_id')
+    predictions_remaining = prediction.get('predictions_remaining')
+    
+    if user_id and predictions_remaining is not None:
+        st.success(f"✅ Prediction generated for {user_id}")
+        st.info(f"🎯 Predictions remaining: {predictions_remaining}")
+    
+    # Continue with existing prediction display logic...
+    source = prediction.get('source', 'unknown')
+    fallback_mode = prediction.get('fallback_mode', False)
+    
+    if not fallback_mode and BACKEND_AVAILABLE:
+        st.success("🔥 **LIVE PREDICTION** - Real backend analysis with full feature integration")
+    elif fallback_mode:
+        st.warning("⚡ **ENHANCED SIMULATION** - Realistic modeling with backend constraints")
+    else:
+        st.info("📊 **DEMO MODE** - Limited backend connectivity")
     
     # Source indicator
     source = prediction.get('source', 'unknown')
@@ -3076,79 +3504,146 @@ def display_cross_validation_tab():
                 'Weight': f"{weight:.3f}",
                 'Percentage': f"{weight*100:.1f}%"
             })
-        
+       
         df_weights = pd.DataFrame(weight_data)
         st.dataframe(df_weights, use_container_width=True)
 
 
 def display_enhanced_risk_tab(prediction: Dict):
-    """Enhanced risk analysis with real calculations"""
+    """Enhanced risk analysis with real-time data"""
     st.subheader("⚠️ Advanced Risk Analysis")
     
+    # Initialize risk analyzer if not already done
+    if not hasattr(st.session_state, 'risk_analyzer'):
+        st.session_state.risk_analyzer = AdvancedRiskAnalyzer()
+    
+    # Get risk metrics
     risk_metrics = prediction.get('enhanced_risk_metrics', {})
+    ticker = prediction.get('ticker', '')
+    current_price = prediction.get('current_price', 0)
+    
+    if not risk_metrics and hasattr(st.session_state, 'data_manager'):
+        # Try to calculate risk metrics if not provided
+        try:
+            multi_tf_data = st.session_state.data_manager.fetch_multi_timeframe_data(ticker, ['1d'])
+            if multi_tf_data and '1d' in multi_tf_data:
+                price_data = multi_tf_data['1d']['Close'].values
+                risk_metrics = st.session_state.risk_analyzer.calculate_comprehensive_risk_metrics(
+                    price_data, prediction
+                )
+                # Convert RiskMetrics dataclass to dict
+                risk_metrics = {k: getattr(risk_metrics, k) for k in risk_metrics.__annotations__}
+        except Exception as e:
+            logger.error(f"Error calculating risk metrics: {e}")
     
     if not risk_metrics:
-        st.warning("No risk metrics available. This feature requires Premium access and sufficient historical data.")
+        st.warning("Unable to generate risk metrics. Ensure sufficient historical data.")
         return
-    
-    # Key risk metrics
+
+    # Create risk dashboard using RiskVisualization
+    risk_dashboard = RiskVisualization.create_risk_dashboard(RiskMetrics(**risk_metrics), ticker)
+    if risk_dashboard:
+        st.plotly_chart(risk_dashboard, use_container_width=True)
+
+    # Key Risk Metrics section
     st.markdown("#### 🎯 Key Risk Metrics")
-    
     risk_cols = st.columns(4)
     
     with risk_cols[0]:
         var_95 = risk_metrics.get('var_95', 0)
         var_color = "red" if abs(var_95) > 0.03 else "orange" if abs(var_95) > 0.02 else "green"
-        st.markdown(
-            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
-            f'border-left:5px solid {var_color};border-radius:5px">'
-            f'<h4 style="margin:0;color:{var_color}">VaR (95%)</h4>'
-            f'<h2 style="margin:5px 0;color:{var_color}">{var_95:.2%}</h2>'
-            f'<small>Daily risk exposure</small>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        st.metric("VaR (95%)", f"{var_95:.2%}", help="Value at Risk")
     
     with risk_cols[1]:
         sharpe = risk_metrics.get('sharpe_ratio', 0)
         sharpe_color = "green" if sharpe > 1.5 else "orange" if sharpe > 1.0 else "red"
-        st.markdown(
-            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
-            f'border-left:5px solid {sharpe_color};border-radius:5px">'
-            f'<h4 style="margin:0;color:{sharpe_color}">Sharpe Ratio</h4>'
-            f'<h2 style="margin:5px 0;color:{sharpe_color}">{sharpe:.2f}</h2>'
-            f'<small>Risk-adjusted return</small>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        st.metric("Sharpe Ratio", f"{sharpe:.2f}", help="Risk-adjusted return")
     
     with risk_cols[2]:
-        max_dd = risk_metrics.get('max_drawdown', 0)
-        dd_color = "green" if abs(max_dd) < 0.1 else "orange" if abs(max_dd) < 0.2 else "red"
-        st.markdown(
-            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
-            f'border-left:5px solid {dd_color};border-radius:5px">'
-            f'<h4 style="margin:0;color:{dd_color}">Max Drawdown</h4>'
-            f'<h2 style="margin:5px 0;color:{dd_color}">{max_dd:.1%}</h2>'
-            f'<small>Worst loss period</small>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        volatility = risk_metrics.get('volatility', 0)
+        vol_color = "green" if volatility < 0.2 else "orange" if volatility < 0.4 else "red"
+        st.metric("Volatility", f"{volatility:.2%}", help="Price fluctuation")
     
     with risk_cols[3]:
-        vol = risk_metrics.get('volatility', 0)
-        vol_color = "green" if vol < 0.2 else "orange" if vol < 0.4 else "red"
-        st.markdown(
-            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
-            f'border-left:5px solid {vol_color};border-radius:5px">'
-            f'<h4 style="margin:0;color:{vol_color}">Volatility</h4>'
-            f'<h2 style="margin:5px 0;color:{vol_color}">{vol:.1%}</h2>'
-            f'<small>Annualized volatility</small>'
-            f'</div>',
-            unsafe_allow_html=True
+        max_dd = risk_metrics.get('max_drawdown', 0)
+        dd_color = "green" if abs(max_dd) < 0.1 else "orange" if abs(max_dd) < 0.2 else "red"
+        st.metric("Max Drawdown", f"{max_dd:.2%}", help="Worst loss period")
+    
+    # Position Sizing Calculator
+    st.markdown("#### 💰 Position Sizing Calculator")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        account_balance = st.number_input(
+            "Account Balance ($)",
+            min_value=1000,
+            max_value=1000000,
+            value=100000,
+            step=5000
         )
     
-    # Additional risk metrics
+    with col2:
+        risk_per_trade = st.slider(
+            "Risk per Trade (%)",
+            min_value=0.5,
+            max_value=5.0,
+            value=2.0,
+            step=0.1
+        ) / 100
+    
+    with col3:
+        stop_loss_pct = st.slider(
+            "Stop Loss (%)",
+            min_value=1.0,
+            max_value=10.0,
+            value=3.0,
+            step=0.5
+        ) / 100
+    
+    # Calculate position sizing
+    position_sizing = st.session_state.risk_analyzer.calculate_position_sizing(
+        RiskMetrics(**risk_metrics),
+        account_balance,
+        risk_per_trade,
+        current_price,
+        stop_loss_pct
+    )
+    
+    # Display position sizing results
+    st.markdown("#### 📊 Position Sizing Recommendations")
+    
+    pos_cols = st.columns(4)
+    
+    with pos_cols[0]:
+        st.metric(
+            "Recommended Shares", 
+            f"{position_sizing['recommended_shares']:,}",
+            help="Shares based on risk management"
+        )
+    
+    with pos_cols[1]:
+        st.metric(
+            "Position Value", 
+            f"${position_sizing['position_value']:,.2f}",
+            help="Total position value"
+        )
+    
+    with pos_cols[2]:
+        st.metric(
+            "Portfolio %", 
+            f"{position_sizing['portfolio_pct']:.1f}%",
+            help="Percentage of portfolio"
+        )
+    
+    with pos_cols[3]:
+        st.metric(
+            "Kelly Fraction", 
+            f"{position_sizing['kelly_fraction']:.1%}",
+            help="Kelly criterion recommendation"
+        )
+    
+    # Additional Risk Metrics
     st.markdown("#### 📊 Additional Risk Metrics")
     
     additional_cols = st.columns(3)
@@ -3156,48 +3651,32 @@ def display_enhanced_risk_tab(prediction: Dict):
     with additional_cols[0]:
         sortino = risk_metrics.get('sortino_ratio', 0)
         st.metric("Sortino Ratio", f"{sortino:.2f}", help="Downside risk-adjusted return")
-        
+    
+    with additional_cols[1]:
         calmar = risk_metrics.get('calmar_ratio', 0)
         st.metric("Calmar Ratio", f"{calmar:.2f}", help="Return vs max drawdown")
     
-    with additional_cols[1]:
-        expected_shortfall = risk_metrics.get('expected_shortfall', 0)
-        st.metric("Expected Shortfall", f"{expected_shortfall:.2%}", help="Average loss beyond VaR")
-        
-        var_99 = risk_metrics.get('var_99', 0)
-        st.metric("VaR (99%)", f"{var_99:.2%}", help="Extreme risk scenario")
-    
     with additional_cols[2]:
-        skewness = risk_metrics.get('skewness', 0)
-        st.metric("Skewness", f"{skewness:.2f}", help="Return distribution asymmetry")
-        
-        kurtosis = risk_metrics.get('kurtosis', 0)
-        st.metric("Kurtosis", f"{kurtosis:.2f}", help="Tail risk measure")
+        omega = risk_metrics.get('omega_ratio', 0)
+        st.metric("Omega Ratio", f"{omega:.2f}", help="Probability-weighted ratio of gains vs losses")
     
-    # Risk assessment
-    st.markdown("#### 🛡️ Risk Assessment")
+    # Risk Analysis Report
+    st.markdown("#### 📋 Comprehensive Risk Report")
+    risk_report = st.session_state.risk_analyzer.generate_risk_report(RiskMetrics(**risk_metrics), ticker)
+    st.text_area(
+        "Detailed Risk Analysis",
+        value=risk_report,
+        height=400,
+        help="Comprehensive risk analysis report"
+    )
     
-    # Calculate overall risk score
-    risk_factors = []
-    if abs(var_95) > 0.03:
-        risk_factors.append("High VaR indicates significant daily risk exposure")
-    if sharpe < 1.0:
-        risk_factors.append("Low Sharpe ratio suggests poor risk-adjusted returns")
-    if abs(max_dd) > 0.2:
-        risk_factors.append("Large maximum drawdown indicates potential for severe losses")
-    if vol > 0.4:
-        risk_factors.append("High volatility suggests unstable price movements")
-    
-    if not risk_factors:
-        st.success("✅ **Low Risk Profile** - All risk metrics are within acceptable ranges")
-    elif len(risk_factors) <= 2:
-        st.warning("⚠️ **Moderate Risk Profile** - Some risk factors require attention")
-        for factor in risk_factors:
-            st.markdown(f"• {factor}")
-    else:
-        st.error("🚨 **High Risk Profile** - Multiple risk factors detected")
-        for factor in risk_factors:
-            st.markdown(f"• {factor}")
+    # Download report option
+    st.download_button(
+        label="📥 Download Risk Report",
+        data=risk_report,
+        file_name=f"{ticker}_risk_report_{datetime.now().strftime('%Y%m%d')}.txt",
+        mime="text/plain"
+    )
 
 
 def display_model_explanations_tab(prediction: Dict):
@@ -4073,7 +4552,7 @@ def create_basic_analytics_section():
     • ⚠️ **Advanced Risk Metrics** - VaR, Sharpe, Sortino ratios
     • 📈 **Cross-Validation** - Rigorous model validation
     
-    **Enter Premium Key: xxxxxxxxx**
+    **Enter Premium Key: Prem246_357**
     """)
 
 
@@ -5183,8 +5662,6 @@ def create_professional_footer():
 # =============================================================================
 
 
-import streamlit as st
-
 def initialize_app_components():
     """
     Initialize core application components with error handling.
@@ -5203,6 +5680,9 @@ def initialize_app_components():
         
         # Initialize advanced app state
         advanced_app_state = AdvancedAppState()
+        
+        # Initialize risk analyzer
+        st.session_state.risk_analyzer = AdvancedRiskAnalyzer()
         
         return advanced_app_state, keep_alive_manager
     
@@ -5256,11 +5736,17 @@ def create_sidebar(advanced_app_state):
 def _create_premium_sidebar(advanced_app_state):
     """
     Create sidebar content for premium tier.
-    
-    Args:
-        advanced_app_state (AdvancedAppState): The advanced app state object
     """
     st.success("✅ **PREMIUM ACTIVE**")
+    
+    # Show remaining predictions if user is logged in
+    if hasattr(st.session_state, 'user_id') and st.session_state.user_id:
+        remaining_predictions = get_user_prediction_status(st.session_state.user_id)
+        st.markdown("### 📊 Usage Tracking")
+        st.info(f"**User ID:** {remaining_predictions.get('user_id', 'N/A')}")
+        st.info(f"**Predictions Used:** {remaining_predictions.get('predictions_used', 0)}")
+        st.info(f"**Predictions Remaining:** {remaining_predictions.get('predictions_remaining', 0)}")
+    
     st.markdown("**Features Unlocked:**")
     features = st.session_state.subscription_info.get('features', [])
     for feature in features[:8]:  # Show first 8 features
@@ -5271,6 +5757,13 @@ def _create_premium_sidebar(advanced_app_state):
         st.session_state.subscription_tier = 'free'
         st.session_state.premium_key = ''
         st.session_state.subscription_info = {}
+        
+        # Clear user tracking information
+        if hasattr(st.session_state, 'user_id'):
+            del st.session_state.user_id
+        if hasattr(st.session_state, 'predictions_remaining'):
+            del st.session_state.predictions_remaining
+        
         st.rerun()
 
 def _create_free_tier_sidebar(advanced_app_state):
@@ -5352,86 +5845,107 @@ def _create_free_tier_sidebar(advanced_app_state):
         # If not consented, stop further execution
         return
 
-    # Premium key activation (only shown after consent)
-    st.info("🔑 Premium Activation")
-    
+    # Add user ID input
+    user_id = st.text_input(
+        "Enter User ID",
+        placeholder="USER001 - USER010",
+        key="user_id_input",
+        help="Enter your assigned user ID"
+    )
+
     premium_key = st.text_input(
         "Enter Premium Key",
         type="password",
         value=st.session_state.get('premium_key', ''),
         key="sidebar_premium_key_input",
-        help="Enter predefined or external premium key"
+        help="Enter the provided premium key"
     )
     
     if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
-        # Validation process
-        external_validation = validate_premium_key_ext(premium_key)
+        # Use the new validation function
+        from premium_keys import validate_premium_access
         
-        # Fallback to predefined key check
-        if not external_validation['valid']:
-            external_validation = (
-                {'valid': True, 'tier': 'premium'} 
-                if premium_key == ProfessionalSubscriptionManager.PREMIUM_KEY 
-                else {'valid': False, 'tier': 'free'}
-            )
+        validation_result = validate_premium_access(user_id, premium_key)
         
-        # Subscription update
-        if external_validation['valid']:
+        if validation_result['valid']:
+            # Update subscription with additional user tracking
             success = advanced_app_state.update_subscription(premium_key)
             if success:
-                st.success("Premium activated successfully!")
-                # Store the key for potential future use
-                st.session_state.premium_key = premium_key
+                # Store user ID in session state
+                st.session_state.user_id = user_id
+                st.session_state.predictions_remaining = validation_result.get('predictions_remaining', 10)
+                st.success(f"Premium activated successfully! {validation_result.get('message', '')}")
             else:
-                st.error("Invalid premium key. Please try again.")
+                st.error("Subscription update failed")
         else:
-            st.error("Invalid premium key. Please check and try again.")
+            st.error(validation_result.get('message', 'Access denied'))
 
 def _create_asset_selection_sidebar():
     """
-    Create asset selection sidebar section.
+    Create asset selection sidebar section with robust handling.
+    Ensures asset selection is always visible regardless of tier.
     """
+    # Ensure default ticker is set if not already present
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = '^GSPC'
+    
+    # Ensure default timeframe is set
+    if 'selected_timeframe' not in st.session_state:
+        st.session_state.selected_timeframe = '1day'
+    
+    # Define ticker categories
     ticker_categories = {
-        '📊 Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
-        '🛢️ Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
-        '₿ Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
-        '💱 Forex': ['USDJPY']
+        'Major Indices': ['^GSPC', '^SPX', '^GDAXI', '^HSI'],
+        'Commodities': ['GC=F', 'SI=F', 'NG=F', 'CC=F', 'KC=F', 'HG=F'],
+        'Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
+        'Forex': ['USDJPY']
     }
     
+    # Select category with default
     category = st.selectbox(
         "Asset Category",
         options=list(ticker_categories.keys()),
-        key="enhanced_category_select"
+        index=0,  # Default to first category
+        key="asset_category_select_permanent"
     )
     
+    # Get available tickers for the selected category
     available_tickers = ticker_categories[category]
-    if st.session_state.subscription_tier == 'free':
-        available_tickers = available_tickers[:3]  # Limit for free tier
     
+    # Limit tickers for free tier
+    if st.session_state.get('subscription_tier', 'free') == 'free':
+        available_tickers = available_tickers[:3]
+    
+    # Ensure current selected ticker is in available tickers
+    if st.session_state.selected_ticker not in available_tickers:
+        st.session_state.selected_ticker = available_tickers[0]
+    
+    # Ticker selection with permanent key and index based on current selection
     ticker = st.selectbox(
         "Select Asset",
         options=available_tickers,
-        key="enhanced_ticker_select",
-        help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
+        index=available_tickers.index(st.session_state.selected_ticker),
+        key="asset_ticker_select_permanent",
+        help=f"Asset type: {get_asset_type(available_tickers[0])}"
     )
     
-    if ticker != st.session_state.selected_ticker:
-        st.session_state.selected_ticker = ticker
+    # Always update selected ticker
+    st.session_state.selected_ticker = ticker
     
-    # Timeframe selection
+    # Timeframe selection with permanent key
     timeframe_options = ['1day']
-    if st.session_state.subscription_tier == 'premium':
+    if st.session_state.get('subscription_tier', 'free') == 'premium':
         timeframe_options = ['15min', '1hour', '4hour', '1day']
     
     timeframe = st.selectbox(
         "Analysis Timeframe",
         options=timeframe_options,
         index=timeframe_options.index('1day'),
-        key="enhanced_timeframe_select"
+        key="asset_timeframe_select_permanent"
     )
     
-    if timeframe != st.session_state.selected_timeframe:
-        st.session_state.selected_timeframe = timeframe
+    # Always update selected timeframe
+    st.session_state.selected_timeframe = timeframe
 
 def _create_system_statistics_sidebar():
     """
@@ -5560,8 +6074,6 @@ def create_main_content():
 def main():
     """
     Main function to orchestrate the AI Trading Professional application.
-    Handles initialization, page configuration, sidebar creation, 
-    and main content rendering.
     """
     # Global declaration of advanced_app_state
     global advanced_app_state
@@ -5579,12 +6091,49 @@ def main():
     # Create enhanced header
     create_bright_enhanced_header()
     
-    # Create sidebar
-    create_sidebar(advanced_app_state)
+    # Create sidebar with disclaimer handling
+    create_enhanced_sidebar(advanced_app_state)
     
-    # Create main content
-    create_main_content()
+    # Only show main content if disclaimer is consented AND user is validated
+    if (st.session_state.get('disclaimer_consented', False) and 
+        'user_id' in st.session_state):
+        create_main_content()
+    elif st.session_state.get('disclaimer_consented', False):
+        # Disclaimer consented but no user validation
+        st.title("🎯 AI Trading Professional")
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            st.markdown("""
+            ## 👋 Welcome to AI Trading Professional
+            
+            ### 🔑 Getting Started:
+            1. **Enter your User ID** in the sidebar
+            2. **Validate your access** to the system
+            3. **Activate premium features** with your key (if applicable)
+            4. **Start trading** with AI-powered predictions
+            
+            ### 🎯 Available Tiers:
+            - **🆓 Free Tier**: System access and viewing
+            - **🎖️ 10 Predictions**: Entry-level trading access
+            - **🏆 25 Predictions**: Enhanced features and analysis
+            - **💎 50 Predictions**: Advanced trading tools
+            - **👑 100 Predictions**: Full professional suite
+            
+            ### 📞 Need Access?
+            Contact your administrator to get:
+            - User ID for system access
+            - Premium keys for trading features
+            - Tier upgrades and extensions
+            """)
+            
+            st.info("**💡 Tip:** Asset selection and basic market viewing are available once you validate your User ID.")
+    else:
+        # Show disclaimer or welcome message
+        st.title("🎯 AI Trading Professional")
+        st.info("Please review and consent to the risk disclaimer in the sidebar to proceed.")
 
-# Main execution
 if __name__ == "__main__":
     main()
