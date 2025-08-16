@@ -64,74 +64,6 @@ from mobile_config import create_mobile_config_manager
 from mobile_performance import create_mobile_performance_optimizer
 
 
-def create_admin_panel():
-    """Integrated admin panel for user management"""
-    st.sidebar.markdown("---")
-    
-    # Admin access check
-    admin_password = st.sidebar.text_input("Admin Password", type="password", key="admin_pass")
-    
-    if admin_password == "admin123":  # Change this password!
-        st.sidebar.success("🔧 Admin Access Granted")
-        
-        # Quick user generation
-        with st.sidebar.expander("🎯 Generate Users", expanded=False):
-            tier_options = {
-                'tier_10': '10 Predictions',
-                'tier_25': '25 Predictions', 
-                'tier_50': '50 Predictions',
-                'tier_100': '100 Predictions'
-            }
-            
-            selected_tier = st.selectbox(
-                "Select Tier",
-                options=list(tier_options.keys()),
-                format_func=lambda x: tier_options[x],
-                key="admin_tier_select"
-            )
-            
-            count = st.number_input("Number of Users", min_value=1, max_value=10, value=1, key="admin_count")
-            
-            if st.button("Generate Users", key="admin_generate"):
-                try:
-                    from premium_keys import EnhancedUserManager, DatabaseManager
-                    
-                    db_manager = DatabaseManager()
-                    user_manager = EnhancedUserManager(db_manager)
-                    
-                    generated_users = user_manager.generate_user_id_with_tier(selected_tier, count)
-                    
-                    st.success(f"✅ Generated {len(generated_users)} users!")
-                    
-                    for user in generated_users:
-                        st.code(f"User ID: {user['user_id']}")
-                        st.code(f"Premium Key: {user['premium_key']}")
-                        st.markdown("---")
-                
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        
-        # Quick user lookup
-        with st.sidebar.expander("👤 User Lookup", expanded=False):
-            lookup_id = st.text_input("User ID to check", key="admin_lookup")
-            
-            if lookup_id and st.button("Check User", key="admin_check"):
-                try:
-                    from premium_keys import get_user_prediction_status
-                    
-                    status = get_user_prediction_status(lookup_id)
-                    
-                    if status['is_active']:
-                        st.success("✅ User found!")
-                        st.info(f"Tier: {status['tier']}")
-                        st.info(f"Remaining: {status['predictions_remaining']}")
-                    else:
-                        st.error("❌ User not found")
-                
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-
 class EnhancedAnalyticsSuite:
     """Advanced Analytics Suite with Enhanced Capabilities and Robust Simulation"""
     
@@ -246,8 +178,8 @@ class EnhancedAnalyticsSuite:
         logger.addHandler(console_handler)
         
         return logger
-
-
+    
+    
     def run_regime_analysis(
         self, 
         data: pd.DataFrame, 
@@ -6161,9 +6093,6 @@ def main():
     
     # Create sidebar with disclaimer handling
     create_enhanced_sidebar(advanced_app_state)
-
-    # Add admin panel (NEW)
-    create_admin_panel()
     
     # Only show main content if disclaimer is consented AND user is validated
     if (st.session_state.get('disclaimer_consented', False) and 
