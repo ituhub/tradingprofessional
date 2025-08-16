@@ -40,6 +40,8 @@ from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
 
+from premium_keys import validate_premium_key as validate_premium_key_ext
+
 
 # Import mobile optimization modules
 from mobile_optimizations import (
@@ -974,6 +976,15 @@ class ProfessionalSubscriptionManager:
     
     @staticmethod
     def validate_premium_key(key: str) -> Dict[str, Any]:
+        """Validate premium key using external validation module"""
+        # First, try external validation
+        external_validation = validate_premium_key_ext(key)
+
+        # If external validation is valid, return its result
+        if external_validation['valid']:
+            return external_validation
+
+        # Keep the original key validation as a fallback
         if key == ProfessionalSubscriptionManager.PREMIUM_KEY:
             return {
                 'valid': True,
@@ -998,6 +1009,8 @@ class ProfessionalSubscriptionManager:
                 ],
                 'message': 'Welcome to the fully integrated Professional AI Trading System!'
             }
+
+        # If no validation passes, return invalid key
         return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
 
 # =============================================================================
@@ -1103,6 +1116,9 @@ class AdvancedAppState:
             st.session_state.subscription_tier = validation['tier']
             st.session_state.premium_key = key
             st.session_state.subscription_info = validation
+            
+            # Explicitly set the model management flag
+            st.session_state.allow_model_management = validation.get('allow_model_management', False)
             
             # Initialize all premium backend features
             if BACKEND_AVAILABLE and validation['tier'] == 'premium':
@@ -4057,7 +4073,7 @@ def create_basic_analytics_section():
     • ⚠️ **Advanced Risk Metrics** - VaR, Sharpe, Sortino ratios
     • 📈 **Cross-Validation** - Rigorous model validation
     
-    **Enter Premium Key: Prem246_357**
+    **Enter Premium Key: xxxxxxxxx**
     """)
 
 
@@ -5255,32 +5271,121 @@ def _create_premium_sidebar(advanced_app_state):
         st.session_state.subscription_tier = 'free'
         st.session_state.premium_key = ''
         st.session_state.subscription_info = {}
-        st.experimental_rerun()
+        st.rerun()
 
 def _create_free_tier_sidebar(advanced_app_state):
     """
-    Create sidebar content for free tier.
+    Create sidebar content for free tier with a comprehensive disclaimer.
     
     Args:
         advanced_app_state (AdvancedAppState): The advanced app state object
     """
-    st.info("ℹ️ **FREE TIER ACTIVE**")
+    # Use a more persistent session state approach
+    if 'disclaimer_consented' not in st.session_state:
+        st.session_state.disclaimer_consented = False
+
+    # Always show disclaimer if not consented
+    if not st.session_state.disclaimer_consented:
+        # Large, attention-grabbing disclaimer
+        st.markdown("""
+        ## 🚨 CRITICAL INVESTMENT RISK WARNING
+        
+        ### PLEASE READ CAREFULLY
+        
+        ⚠️ **By using this platform, you acknowledge:**
+        
+        1. 📊 **Algorithmic Predictions**: 
+           - NOT guaranteed investment recommendations
+           - Based on historical data and current market conditions
+        
+        2. 💸 **Financial Risk**: 
+           - Significant potential for capital loss
+           - All investments carry inherent risks
+        
+        3. 🔮 **No Guaranteed Returns**: 
+           - Past performance does NOT predict future results
+           - Market conditions can change rapidly
+        
+        4. 🧠 **AI Limitations**: 
+           - Cannot predict unexpected market events
+           - Subject to data and model constraints
+        
+        5. 👤 **Personal Responsibility**: 
+           - YOU are solely responsible for ALL investment decisions
+           - Platform is for informational purposes only
+        
+        ### CONSENT REQUIRED
+        """)
+        
+        # Consent mechanism
+        consent_col1, consent_col2 = st.columns(2)
+        
+        with consent_col1:
+            consent = st.button(
+                "✅ I FULLY UNDERSTAND & CONSENT", 
+                key="disclaimer_consent_full", 
+                type="primary",
+                help="Confirm you've read and understand the risks"
+            )
+        
+        with consent_col2:
+            decline = st.button(
+                "❌ I DO NOT CONSENT", 
+                key="disclaimer_decline_full", 
+                type="secondary",
+                help="Exit the platform if you do not agree to the terms"
+            )
+        
+        # Handle consent
+        if consent:
+            # Directly set the consent flag
+            st.session_state.disclaimer_consented = True
+            # Clear any previous error messages
+            st.empty()
+        
+        # Handle decline
+        if decline:
+            st.error("Access denied. You must consent to use the platform.")
+            # Optionally, you could add a way to exit or redirect
+            return
+        
+        # If not consented, stop further execution
+        return
+
+    # Premium key activation (only shown after consent)
+    st.info("🔑 Premium Activation")
     
     premium_key = st.text_input(
         "Enter Premium Key",
         type="password",
-        value=st.session_state.premium_key,
+        value=st.session_state.get('premium_key', ''),
         key="sidebar_premium_key_input",
-        help="Enter 'Premium Key' for full access"
+        help="Enter predefined or external premium key"
     )
     
     if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
-        success = advanced_app_state.update_subscription(premium_key)
-        if success:
-            st.success("Premium activated! Refreshing...")
-            st.experimental_rerun()
+        # Validation process
+        external_validation = validate_premium_key_ext(premium_key)
+        
+        # Fallback to predefined key check
+        if not external_validation['valid']:
+            external_validation = (
+                {'valid': True, 'tier': 'premium'} 
+                if premium_key == ProfessionalSubscriptionManager.PREMIUM_KEY 
+                else {'valid': False, 'tier': 'free'}
+            )
+        
+        # Subscription update
+        if external_validation['valid']:
+            success = advanced_app_state.update_subscription(premium_key)
+            if success:
+                st.success("Premium activated successfully!")
+                # Store the key for potential future use
+                st.session_state.premium_key = premium_key
+            else:
+                st.error("Invalid premium key. Please try again.")
         else:
-            st.error("Invalid premium key")
+            st.error("Invalid premium key. Please check and try again.")
 
 def _create_asset_selection_sidebar():
     """
@@ -5394,16 +5499,30 @@ def create_main_content():
     col1, col2 = st.columns([1, 4])
     
     with col2:
-        # Dynamically create tabs based on subscription tier
+        # Dynamically create tabs based on subscription tier and key features
         if st.session_state.subscription_tier == 'premium':
-            main_tabs = st.tabs([
-                "🎯 Prediction", 
-                "📊 Analytics", 
-                "💼 Portfolio", 
-                "📈 Backtesting",
-                "🔧 Model Management"
-            ])
+            # Check if Model Management is allowed
+            allow_model_management = st.session_state.subscription_info.get('allow_model_management', False)
+            
+            if allow_model_management:
+                # Full tabs including Model Management
+                main_tabs = st.tabs([
+                    "🎯 Prediction", 
+                    "📊 Analytics", 
+                    "💼 Portfolio", 
+                    "📈 Backtesting",
+                    "🔧 Model Management"
+                ])
+            else:
+                # Tabs without Model Management
+                main_tabs = st.tabs([
+                    "🎯 Prediction", 
+                    "📊 Analytics", 
+                    "💼 Portfolio", 
+                    "📈 Backtesting"
+                ])
         else:
+            # Free tier tabs
             main_tabs = st.tabs([
                 "🎯 Prediction", 
                 "📊 Basic Analytics"
@@ -5427,8 +5546,10 @@ def create_main_content():
             with main_tabs[3]:
                 create_backtesting_section()
             
-            with main_tabs[4]:
-                create_model_management_section()
+            # Only create Model Management section if allowed
+            if allow_model_management:
+                with main_tabs[-1]:  # Last tab if Model Management is present
+                    create_model_management_section()
         
         # Continuous real-time data updates
         update_real_time_data()
