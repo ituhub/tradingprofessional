@@ -1,3 +1,4 @@
+
 """
 FULLY INTEGRATED AI TRADING PROFESSIONAL - COMPLETE BACKEND INTEGRATION
 ==============================================================================
@@ -1063,13 +1064,11 @@ logging.basicConfig(
 class ProfessionalSubscriptionManager:
     """Enhanced subscription management with full feature access"""
     
-    PREMIUM_KEY = "Prem246_357"
-    
-    TIER_FEATURES = {
+     TIER_FEATURES = {
         'free': {
             'max_tickers': 3,
-            'max_predictions_per_day': 10,
-            'available_models': ['xgboost', 'sklearn_ensemble'],
+            'max_predictions_per_day': 0,  # Changed from 10 to 0
+            'available_models': [],  # Changed from ['xgboost', 'sklearn_ensemble'] to []
             'max_forecast_days': 1,
             'ensemble_voting': False,
             'cross_validation': False,
@@ -1088,9 +1087,75 @@ class ProfessionalSubscriptionManager:
             'options_flow': False,
             'meta_learning': False
         },
-        'premium': {
+        'tier_10': {
+            'max_tickers': 5,
+            'max_predictions_per_day': 10,
+            'available_models': ['xgboost', 'sklearn_ensemble'],
+            'max_forecast_days': 5,
+            'ensemble_voting': True,
+            'cross_validation': False,
+            'model_explanations': False,
+            'risk_analytics': True,
+            'backtesting': False,
+            'regime_detection': False,
+            'drift_detection': False,
+            'portfolio_optimization': False,
+            'real_time_data': True,
+            'alternative_data': False,
+            'multi_timeframe': False,
+            'hf_features': False,
+            'economic_data': False,
+            'sentiment_analysis': False,
+            'options_flow': False,
+            'meta_learning': False
+        },
+        'tier_25': {
+            'max_tickers': 10,
+            'max_predictions_per_day': 25,
+            'available_models': ['xgboost', 'sklearn_ensemble', 'cnn_lstm', 'enhanced_tcn'],
+            'max_forecast_days': 10,
+            'ensemble_voting': True,
+            'cross_validation': True,
+            'model_explanations': False,
+            'risk_analytics': True,
+            'backtesting': True,
+            'regime_detection': False,
+            'drift_detection': False,
+            'portfolio_optimization': False,
+            'real_time_data': True,
+            'alternative_data': True,
+            'multi_timeframe': True,
+            'hf_features': False,
+            'economic_data': True,
+            'sentiment_analysis': True,
+            'options_flow': False,
+            'meta_learning': False
+        },
+        'tier_50': {
+            'max_tickers': 20,
+            'max_predictions_per_day': 50,
+            'available_models': ['xgboost', 'sklearn_ensemble', 'cnn_lstm', 'enhanced_tcn', 'enhanced_informer', 'enhanced_nbeats'],
+            'max_forecast_days': 20,
+            'ensemble_voting': True,
+            'cross_validation': True,
+            'model_explanations': True,
+            'risk_analytics': True,
+            'backtesting': True,
+            'regime_detection': True,
+            'drift_detection': True,
+            'portfolio_optimization': True,
+            'real_time_data': True,
+            'alternative_data': True,
+            'multi_timeframe': True,
+            'hf_features': True,
+            'economic_data': True,
+            'sentiment_analysis': True,
+            'options_flow': True,
+            'meta_learning': False
+        },
+        'tier_100': {
             'max_tickers': float('inf'),
-            'max_predictions_per_day': float('inf'),
+            'max_predictions_per_day': 100,
             'available_models': 'all',
             'max_forecast_days': 30,
             'ensemble_voting': True,
@@ -1112,72 +1177,110 @@ class ProfessionalSubscriptionManager:
         }
     }
     
+    @staticmethod
+    def validate_premium_access(key: str, user_id: str = None) -> Dict[str, Any]:
+        """Validate premium key using new database system"""
+        try:
+            # Get database instance
+            if 'user_db' not in st.session_state:
+                st.session_state.user_db = initialize_user_database()
+            
+            user_db = st.session_state.user_db
+            if not user_db:
+                return {'valid': False, 'tier': 'free', 'message': 'Database connection failed'}
+            
+            # If user_id is provided, validate the key for that specific user
+            if user_id:
+                validation_result = user_db.validate_premium_key(key, user_id)
+                
+                if validation_result.get('valid', False):
+                    tier = validation_result.get('tier', 'free')
+                    tier_features = ProfessionalSubscriptionManager.TIER_FEATURES.get(tier, ProfessionalSubscriptionManager.TIER_FEATURES['free'])
+                    
+                    return {
+                        'valid': True,
+                        'tier': tier,
+                        'user_id': user_id,
+                        'expires': validation_result.get('expires', 'Unknown'),
+                        'description': f'{tier.replace("_", " ").title()} Access',
+                        'features': ProfessionalSubscriptionManager._get_feature_list(tier_features),
+                        'predictions_remaining': validation_result.get('predictions_remaining', 0),
+                        'max_predictions': validation_result.get('max_predictions', 0),
+                        'message': f'Welcome! {tier.replace("_", " ").title()} activated successfully.'
+                    }
+                else:
+                    return {
+                        'valid': False, 
+                        'tier': 'free', 
+                        'message': validation_result.get('message', 'Invalid premium key')
+                    }
+            
+            # If no user_id provided, return invalid
+            return {
+                'valid': False, 
+                'tier': 'free', 
+                'message': 'User ID required for premium key validation'
+            }
+        
+        except Exception as e:
+            logger.error(f"Error validating premium access: {e}")
+            return {
+                'valid': False, 
+                'tier': 'free', 
+                'message': 'System error during validation'
+            }
     
     @staticmethod
-    def validate_premium_access(key: str) -> Dict[str, Any]:
-        """Validate premium key using external validation module"""
-        # First, use the validate_premium_access function from premium_keys module
-        external_validation = validate_premium_access(key)
-
-        # If external validation is valid, return its result
-        if external_validation['valid']:
-            return external_validation
-
-        # Keep the original key validation as a fallback
-        if key == ProfessionalSubscriptionManager.PREMIUM_KEY:
-            return {
-                'valid': True,
-                'tier': 'premium',
-                'expires': 'Never',
-                'description': 'Professional AI Trading System - Full Backend Integration',
-                'features': [
-                    '8 Advanced AI Models',
-                    'Real-time Cross-validation',
-                    'SHAP Model Explanations',
-                    'Advanced Risk Analytics',
-                    'Market Regime Detection',
-                    'Model Drift Detection',
-                    'Portfolio Optimization',
-                    'Real-time Alternative Data',
-                    'Multi-timeframe Analysis',
-                    'High-frequency Features',
-                    'Economic Indicators',
-                    'Sentiment Analysis',
-                    'Options Flow Data',
-                    'Meta-learning Ensemble'
-                ],
-                'message': 'Welcome to the fully integrated Professional AI Trading System!'
-            }
-
-        # If no validation passes, return invalid key
-        return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
+    def _get_feature_list(tier_features: Dict) -> List[str]:
+        """Get human-readable feature list from tier features"""
+        features = []
+        
+        if tier_features.get('max_predictions_per_day', 0) > 0:
+            features.append(f"{tier_features['max_predictions_per_day']} Daily Predictions")
+        
+        if isinstance(tier_features.get('available_models'), list) and tier_features['available_models']:
+            features.append(f"{len(tier_features['available_models'])} AI Models")
+        elif tier_features.get('available_models') == 'all':
+            features.append("All AI Models")
+        
+        if tier_features.get('cross_validation'):
+            features.append("Cross-Validation Analysis")
+        
+        if tier_features.get('model_explanations'):
+            features.append("SHAP Model Explanations")
+        
+        if tier_features.get('risk_analytics'):
+            features.append("Advanced Risk Analytics")
+        
+        if tier_features.get('backtesting'):
+            features.append("Advanced Backtesting")
+        
+        if tier_features.get('regime_detection'):
+            features.append("Market Regime Detection")
+        
+        if tier_features.get('portfolio_optimization'):
+            features.append("Portfolio Optimization")
+        
+        if tier_features.get('alternative_data'):
+            features.append("Alternative Data Sources")
+        
+        if tier_features.get('sentiment_analysis'):
+            features.append("Sentiment Analysis")
+        
+        return features
     
     
 class UserIDManager:
-    """
-    Manages generation and tracking of user IDs
-    """
+    """Enhanced user ID management with database integration"""
+    
     @staticmethod
     def generate_user_id() -> str:
-        """
-        Generate a unique user ID
-        
-        Returns:
-            str: Unique user ID in format USER-XXXXXXXX
-        """
+        """Generate a unique user ID"""
         return f"USER-{uuid.uuid4().hex[:8].upper()}"
     
     @staticmethod
     def validate_user_id(user_id: str) -> Dict[str, Any]:
-        """
-        Validate user ID format and existence
-        
-        Args:
-            user_id (str): User ID to validate
-        
-        Returns:
-            Dict[str, Any]: Validation result
-        """
+        """Validate user ID using database"""
         try:
             # Check format
             if not user_id or not user_id.startswith('USER-') or len(user_id) != 13:
@@ -1186,8 +1289,18 @@ class UserIDManager:
                     'message': 'Invalid User ID format. Expected: USER-XXXXXXXX'
                 }
             
-            # Check existence in database
+            # Get database instance
+            if 'user_db' not in st.session_state:
+                st.session_state.user_db = initialize_user_database()
+            
             user_db = st.session_state.user_db
+            if not user_db:
+                return {
+                    'valid': False,
+                    'message': 'Database connection failed'
+                }
+            
+            # Check existence in database
             user_data = user_db.get_user(user_id)
             
             if user_data:
@@ -1207,7 +1320,7 @@ class UserIDManager:
             return {
                 'valid': False,
                 'message': 'System error during validation'
-            }   
+            } 
     
 
 # =============================================================================
@@ -2888,9 +3001,7 @@ def create_enhanced_header():
 
 # Update the create_enhanced_sidebar function to always show asset selection
 def create_enhanced_sidebar(advanced_app_state):
-    """
-    Create an enhanced and comprehensive sidebar with synchronized database
-    """
+    """Updated sidebar with database integration"""
     with st.sidebar:
         # Initialize database
         user_db = initialize_user_database()
@@ -2918,25 +3029,22 @@ def create_enhanced_sidebar(advanced_app_state):
             
             if st.button("Validate User ID", type="primary"):
                 if manual_id:
-                    try:
-                        validation = UserIDManager.validate_user_id(manual_id)
-                        if validation['valid']:
-                            st.session_state.user_id = manual_id
-                            
-                            # Get user details to set initial tier
-                            user_data = validation.get('user_data', {})
-                            if user_data and user_data.get('tier') != 'unknown':
-                                if user_data['tier'] == 'free':
-                                    st.session_state.subscription_tier = 'free'
-                                else:
-                                    st.session_state.subscription_tier = 'premium'
-                            
-                            st.success("✅ User ID validated successfully!")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {validation['message']}")
-                    except Exception as e:
-                        st.error(f"❌ Validation error: {e}")
+                    validation = UserIDManager.validate_user_id(manual_id)
+                    if validation['valid']:
+                        st.session_state.user_id = manual_id
+                        
+                        # Get user details to set initial tier
+                        user_data = validation.get('user_data', {})
+                        if user_data and user_data.get('tier') != 'unknown':
+                            if user_data['tier'] == 'free':
+                                st.session_state.subscription_tier = 'free'
+                            else:
+                                st.session_state.subscription_tier = 'premium'
+                        
+                        st.success("✅ User ID validated successfully!")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {validation['message']}")
                 else:
                     st.error("❌ Please enter a User ID")
             
@@ -2948,16 +3056,13 @@ def create_enhanced_sidebar(advanced_app_state):
         st.success(f"👤 User: {st.session_state.user_id}")
         
         # Get current user status using new database
-        try:
-            user_status = get_user_status(st.session_state.user_id)
-            if user_status and user_status.get('tier') != 'unknown':
-                st.info(f"🎯 Predictions: {user_status.get('predictions_remaining', 0)}/{user_status.get('max_predictions', 0)}")
-                
-                # Show tier info
-                tier_display = user_status.get('tier_display_name', 'Unknown Tier')
-                st.info(f"🏆 Tier: {tier_display}")
-        except Exception as e:
-            st.error(f"Error getting user status: {e}")
+        user_status = get_user_status(st.session_state.user_id)
+        if user_status and user_status.get('tier') != 'unknown':
+            st.info(f"🎯 Predictions: {user_status.get('predictions_remaining', 0)}/{user_status.get('max_predictions', 0)}")
+            
+            # Show tier info
+            tier_display = user_status.get('tier_display_name', 'Unknown Tier')
+            st.info(f"🏆 Tier: {tier_display}")
         
         # Subscription Management Section
         st.markdown("---")
@@ -2965,47 +3070,43 @@ def create_enhanced_sidebar(advanced_app_state):
         
         if st.session_state.subscription_tier == 'premium':
             # Premium Tier Details
-            try:
-                user_status = get_user_status(st.session_state.user_id)
-                
-                st.success("✅ PREMIUM ACTIVE")
-                
-                # Detailed Account Metrics
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.metric(
-                        "Used", 
-                        user_status.get('predictions_used', 0),
-                        help="Predictions used"
-                    )
-                
-                with col2:
-                    st.metric(
-                        "Remaining", 
-                        user_status.get('predictions_remaining', 0),
-                        help="Predictions remaining"
-                    )
-                
-                # Reset date info
-                reset_date = user_status.get('next_reset', 'Unknown')
-                if reset_date != 'Unknown':
-                    try:
-                        reset_datetime = datetime.fromisoformat(reset_date.replace('Z', '+00:00'))
-                        st.info(f"🔄 Resets: {reset_datetime.strftime('%Y-%m-%d')}")
-                    except:
-                        st.info(f"🔄 Resets: {reset_date}")
-                
-                # Logout option
-                if st.button("🚪 Logout User", type="secondary"):
-                    if 'user_id' in st.session_state:
-                        del st.session_state.user_id
-                    st.session_state.subscription_tier = 'free'
-                    st.session_state.premium_key = ''
-                    st.rerun()
+            user_status = get_user_status(st.session_state.user_id)
             
-            except Exception as e:
-                st.error(f"Error retrieving premium status: {e}")
+            st.success("✅ PREMIUM ACTIVE")
+            
+            # Detailed Account Metrics
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric(
+                    "Used", 
+                    user_status.get('predictions_used', 0),
+                    help="Predictions used"
+                )
+            
+            with col2:
+                st.metric(
+                    "Remaining", 
+                    user_status.get('predictions_remaining', 0),
+                    help="Predictions remaining"
+                )
+            
+            # Reset date info
+            reset_date = user_status.get('next_reset', 'Unknown')
+            if reset_date != 'Unknown':
+                try:
+                    reset_datetime = datetime.fromisoformat(reset_date.replace('Z', '+00:00'))
+                    st.info(f"🔄 Resets: {reset_datetime.strftime('%Y-%m-%d')}")
+                except:
+                    st.info(f"🔄 Resets: {reset_date}")
+            
+            # Logout option
+            if st.button("🚪 Logout User", type="secondary"):
+                if 'user_id' in st.session_state:
+                    del st.session_state.user_id
+                st.session_state.subscription_tier = 'free'
+                st.session_state.premium_key = ''
+                st.rerun()
         
         else:
             # Free Tier or Upgrade Section
@@ -3029,27 +3130,24 @@ def create_enhanced_sidebar(advanced_app_state):
             # Activation Button
             if st.button("🚀 Activate Premium", type="primary"):
                 if premium_key:
-                    try:
-                        # Use new database validation
-                        activation_result = user_db.validate_premium_key(
-                            premium_key, st.session_state.user_id
-                        )
-                        
-                        if activation_result.get('valid', False):
-                            tier = activation_result.get('tier', 'free')
-                            if tier != 'free':
-                                st.session_state.subscription_tier = 'premium'
-                                st.session_state.premium_key = premium_key
-                                st.success("✅ Premium activated successfully!")
-                                st.rerun()
-                            else:
-                                st.session_state.subscription_tier = 'free'
-                                st.info("ℹ️ Free tier access confirmed")
-                                st.rerun()
+                    # Use database validation
+                    activation_result = user_db.validate_premium_key(
+                        premium_key, st.session_state.user_id
+                    )
+                    
+                    if activation_result.get('valid', False):
+                        tier = activation_result.get('tier', 'free')
+                        if tier != 'free':
+                            st.session_state.subscription_tier = 'premium'
+                            st.session_state.premium_key = premium_key
+                            st.success("✅ Premium activated successfully!")
+                            st.rerun()
                         else:
-                            st.error(f"❌ {activation_result.get('message', 'Activation failed')}")
-                    except Exception as e:
-                        st.error(f"❌ Activation error: {e}")
+                            st.session_state.subscription_tier = 'free'
+                            st.info("ℹ️ Free tier access confirmed")
+                            st.rerun()
+                    else:
+                        st.error(f"❌ {activation_result.get('message', 'Activation failed')}")
                 else:
                     st.error("❌ Please enter a premium key")
 
