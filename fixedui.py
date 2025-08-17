@@ -1,3 +1,4 @@
+
 """
 FULLY INTEGRATED AI TRADING PROFESSIONAL - COMPLETE BACKEND INTEGRATION
 ==============================================================================
@@ -2810,20 +2811,30 @@ def create_enhanced_sidebar(advanced_app_state):
             if st.button("Validate User ID", type="primary"):
                 if manual_id:
                     try:
+                        # Use the updated UserIDManager validation
                         validation = UserIDManager.validate_user_id(manual_id)
+                        
                         if validation['valid']:
                             st.session_state.user_id = manual_id
+                            
                             # Get user details to set initial tier
                             user_status = get_user_prediction_status(manual_id)
+                            
                             if user_status and user_status.get('tier') != 'unknown':
+                                # Determine tier based on user status
                                 if user_status['tier'] == 'free':
                                     st.session_state.subscription_tier = 'free'
                                 else:
                                     st.session_state.subscription_tier = 'premium'
+                            else:
+                                # Fallback to validation result if user_status is not conclusive
+                                st.session_state.subscription_tier = validation.get('tier', 'free')
+                            
                             st.success("✅ User ID validated successfully!")
                             st.rerun()
                         else:
                             st.error(f"❌ {validation['message']}")
+                    
                     except Exception as e:
                         st.error(f"❌ Validation error: {e}")
                 else:
