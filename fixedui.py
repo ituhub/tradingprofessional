@@ -1064,7 +1064,7 @@ logging.basicConfig(
 class ProfessionalSubscriptionManager:
     """Enhanced subscription management with full feature access"""
     
-     TIER_FEATURES = {
+    TIER_FEATURES = {
         'free': {
             'max_tickers': 3,
             'max_predictions_per_day': 0,  # Changed from 10 to 0
