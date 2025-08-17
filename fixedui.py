@@ -1,4 +1,3 @@
-
 """
 FULLY INTEGRATED AI TRADING PROFESSIONAL - COMPLETE BACKEND INTEGRATION
 ==============================================================================
@@ -43,11 +42,10 @@ from session_state_manager import initialize_session_state, reset_session_state,
 
 from riskanalysis import AdvancedRiskAnalyzer, RiskVisualization, RiskMetrics
 
+from user_database import UserDatabase
+
 # Add this import at the top of fixedui.py
 from disclaimer import InvestmentDisclaimer, DisclaimerValidator
-
-# Import from local user_database
-from user_database import UserDatabase
 
 # Import from premium_keys module
 from premium_keys import (
@@ -1024,21 +1022,10 @@ class ProfessionalSubscriptionManager:
         }
     }
     
+    
     @staticmethod
     def validate_premium_access(key: str) -> Dict[str, Any]:
         """Validate premium key using external validation module"""
-        
-        user_db = UserDatabase()
-        user = user_db.get_user(user_id)
-    
-        # If no user found, return invalid access
-        if not user:
-            return {
-                'valid': False,
-                'tier': UserTier.FREE.name.lower(),
-                'message': 'User ID not found in system'
-            }
-        
         # First, use the validate_premium_access function from premium_keys module
         external_validation = validate_premium_access(key)
 
@@ -1075,35 +1062,63 @@ class ProfessionalSubscriptionManager:
         # If no validation passes, return invalid key
         return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
     
-def use_premium_prediction(user_id: str) -> bool:
-    user_db = UserDatabase()
-    return user_db.use_prediction(user_id)
-
-def get_user_prediction_status(user_id: str) -> Dict[str, Any]:
-    user_db = UserDatabase()
-    user = user_db.get_user(user_id)
     
-    if not user:
-        return {
-            'user_id': user_id,
-            'tier': 'unknown',
-            'predictions_used': 0,
-            'max_predictions': 0,
-            'predictions_remaining': 0,
-            'is_active': False
-        }
+class UserIDManager:
+    """
+    Manages generation and tracking of user IDs
+    """
+    @staticmethod
+    def generate_user_id() -> str:
+        """
+        Generate a unique user ID
+        
+        Returns:
+            str: Unique user ID in format USER-XXXXXXXX
+        """
+        return f"USER-{uuid.uuid4().hex[:8].upper()}"
     
-    # Return user status details
-    return {
-        'user_id': user_id,
-        'tier': user['tier'],
-        'predictions_used': user['predictions_used'],
-        'max_predictions': user['max_predictions'],
-        'predictions_remaining': user['predictions_remaining'],
-        'is_active': user['is_active'],
-        'last_used': user['last_used'],
-        'reset_date': user['reset_date']
-    }
+    @staticmethod
+    def validate_user_id(user_id: str) -> Dict[str, Any]:
+        """
+        Validate user ID format and existence
+        
+        Args:
+            user_id (str): User ID to validate
+        
+        Returns:
+            Dict[str, Any]: Validation result
+        """
+        try:
+            # Check format
+            if not user_id or not user_id.startswith('USER-') or len(user_id) != 13:
+                return {
+                    'valid': False,
+                    'message': 'Invalid User ID format. Expected: USER-XXXXXXXX'
+                }
+            
+            # Check existence in database
+            user_db = st.session_state.user_db
+            user_data = user_db.get_user(user_id)
+            
+            if user_data:
+                return {
+                    'valid': True,
+                    'message': 'User ID is valid and exists',
+                    'user_data': user_data
+                }
+            else:
+                return {
+                    'valid': False,
+                    'message': 'User ID not found in system'
+                }
+        
+        except Exception as e:
+            logger.error(f"Error validating user ID: {e}")
+            return {
+                'valid': False,
+                'message': 'System error during validation'
+            }   
+    
 
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
@@ -1707,8 +1722,8 @@ class RealPredictionEngine:
             
             user_id = st.session_state.user_id
             
-            # Get user status and validate
-            user_status = get_user_prediction_status(user_id)
+            # Get user status using new database
+            user_status = get_user_status(user_id)
             
             if not user_status or not user_status.get('is_active', False):
                 return {
@@ -1749,7 +1764,8 @@ class RealPredictionEngine:
                 }
             
             # Try to use a prediction
-            if not use_premium_prediction(user_id):
+            session_id = st.session_state.get('session_id', f"session_{datetime.now().timestamp()}")
+            if not use_user_prediction(user_id, session_id):
                 return {
                     'prediction_blocked': True,
                     'user_message': 'Failed to process prediction request. Please try again.',
@@ -2783,12 +2799,14 @@ def create_enhanced_header():
 # Update the create_enhanced_sidebar function to always show asset selection
 def create_enhanced_sidebar(advanced_app_state):
     """
-    Create an enhanced and comprehensive sidebar with disclaimer first
+    Create an enhanced and comprehensive sidebar with synchronized database
     """
     with st.sidebar:
+        # Initialize database
+        user_db = initialize_user_database()
+        
         # First, check if user has consented to disclaimer
         if not InvestmentDisclaimer.display_disclaimer():
-            # If disclaimer not consented, only show disclaimer
             return
         
         # Show compact consent status
@@ -2811,30 +2829,22 @@ def create_enhanced_sidebar(advanced_app_state):
             if st.button("Validate User ID", type="primary"):
                 if manual_id:
                     try:
-                        # Use the updated UserIDManager validation
                         validation = UserIDManager.validate_user_id(manual_id)
-                        
                         if validation['valid']:
                             st.session_state.user_id = manual_id
                             
                             # Get user details to set initial tier
-                            user_status = get_user_prediction_status(manual_id)
-                            
-                            if user_status and user_status.get('tier') != 'unknown':
-                                # Determine tier based on user status
-                                if user_status['tier'] == 'free':
+                            user_data = validation.get('user_data', {})
+                            if user_data and user_data.get('tier') != 'unknown':
+                                if user_data['tier'] == 'free':
                                     st.session_state.subscription_tier = 'free'
                                 else:
                                     st.session_state.subscription_tier = 'premium'
-                            else:
-                                # Fallback to validation result if user_status is not conclusive
-                                st.session_state.subscription_tier = validation.get('tier', 'free')
                             
                             st.success("✅ User ID validated successfully!")
                             st.rerun()
                         else:
                             st.error(f"❌ {validation['message']}")
-                    
                     except Exception as e:
                         st.error(f"❌ Validation error: {e}")
                 else:
@@ -2847,22 +2857,15 @@ def create_enhanced_sidebar(advanced_app_state):
         # Show current user info
         st.success(f"👤 User: {st.session_state.user_id}")
         
-        # Get current user status
+        # Get current user status using new database
         try:
-            user_status = get_user_prediction_status(st.session_state.user_id)
-            if user_status:
+            user_status = get_user_status(st.session_state.user_id)
+            if user_status and user_status.get('tier') != 'unknown':
                 st.info(f"🎯 Predictions: {user_status.get('predictions_remaining', 0)}/{user_status.get('max_predictions', 0)}")
                 
                 # Show tier info
-                tier_display = {
-                    'free': 'Free Tier',
-                    'tier_10': '10 Predictions',
-                    'tier_25': '25 Predictions', 
-                    'tier_50': '50 Predictions',
-                    'tier_100': '100 Predictions'
-                }.get(user_status.get('tier', 'free'), 'Unknown Tier')
-                
-                st.info(f"📊 Tier: {tier_display}")
+                tier_display = user_status.get('tier_display_name', 'Unknown Tier')
+                st.info(f"🏆 Tier: {tier_display}")
         except Exception as e:
             st.error(f"Error getting user status: {e}")
         
@@ -2873,7 +2876,7 @@ def create_enhanced_sidebar(advanced_app_state):
         if st.session_state.subscription_tier == 'premium':
             # Premium Tier Details
             try:
-                prediction_status = get_user_prediction_status(st.session_state.user_id)
+                user_status = get_user_status(st.session_state.user_id)
                 
                 st.success("✅ PREMIUM ACTIVE")
                 
@@ -2883,19 +2886,19 @@ def create_enhanced_sidebar(advanced_app_state):
                 with col1:
                     st.metric(
                         "Used", 
-                        prediction_status.get('predictions_used', 0),
+                        user_status.get('predictions_used', 0),
                         help="Predictions used"
                     )
                 
                 with col2:
                     st.metric(
                         "Remaining", 
-                        prediction_status.get('predictions_remaining', 0),
+                        user_status.get('predictions_remaining', 0),
                         help="Predictions remaining"
                     )
                 
                 # Reset date info
-                reset_date = prediction_status.get('next_reset', 'Unknown')
+                reset_date = user_status.get('next_reset', 'Unknown')
                 if reset_date != 'Unknown':
                     try:
                         reset_datetime = datetime.fromisoformat(reset_date.replace('Z', '+00:00'))
@@ -2916,14 +2919,14 @@ def create_enhanced_sidebar(advanced_app_state):
         
         else:
             # Free Tier or Upgrade Section
-            current_status = get_user_prediction_status(st.session_state.user_id)
+            current_status = get_user_status(st.session_state.user_id)
             
             if current_status and current_status.get('tier') == 'free':
                 st.info("🆓 FREE TIER ACTIVE")
                 st.warning("⚠️ No predictions available in free tier")
             else:
                 # User has premium tier but not activated
-                st.warning("🔒 PREMIUM TIER AVAILABLE")
+                st.warning("🔑 PREMIUM TIER AVAILABLE")
                 st.info("Enter your premium key to activate")
             
             # Premium Key Input
@@ -2937,14 +2940,14 @@ def create_enhanced_sidebar(advanced_app_state):
             if st.button("🚀 Activate Premium", type="primary"):
                 if premium_key:
                     try:
-                        activation_result = validate_premium_access(
-                            user_id=st.session_state.user_id,
-                            key=premium_key
+                        # Use new database validation
+                        activation_result = user_db.validate_premium_key(
+                            premium_key, st.session_state.user_id
                         )
                         
                         if activation_result.get('valid', False):
                             tier = activation_result.get('tier', 'free')
-                            if tier == 'premium':
+                            if tier != 'free':
                                 st.session_state.subscription_tier = 'premium'
                                 st.session_state.premium_key = premium_key
                                 st.success("✅ Premium activated successfully!")
@@ -6139,6 +6142,9 @@ def main():
     
     # Initialize core components
     advanced_app_state, keep_alive_manager = initialize_app_components()
+    
+    # Initialize user database
+    user_db = initialize_user_database()
     
     # Check if initialization was successful
     if advanced_app_state is None:
