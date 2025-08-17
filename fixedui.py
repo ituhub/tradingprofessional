@@ -66,6 +66,96 @@ from mobile_config import create_mobile_config_manager
 from mobile_performance import create_mobile_performance_optimizer
 
 
+# =============================================================================
+# DATABASE HELPER FUNCTIONS - ADD THESE HERE
+# =============================================================================
+
+def initialize_user_database():
+    """
+    Initialize the user database for the application
+    
+    Returns:
+        UserDatabase: Initialized database instance
+    """
+    try:
+        # Initialize the user database
+        user_db = UserDatabase()
+        
+        # Store in session state for easy access
+        if 'user_db' not in st.session_state:
+            st.session_state.user_db = user_db
+        
+        logger.info("User database initialized successfully")
+        return user_db
+    
+    except Exception as e:
+        logger.error(f"Failed to initialize user database: {e}")
+        st.error(f"Database initialization failed: {e}")
+        return None
+
+def get_user_status(user_id: str) -> Dict[str, Any]:
+    """
+    Get user status using the new database
+    
+    Args:
+        user_id (str): User ID to lookup
+    
+    Returns:
+        Dict[str, Any]: User status information
+    """
+    try:
+        if 'user_db' not in st.session_state:
+            st.session_state.user_db = initialize_user_database()
+        
+        user_db = st.session_state.user_db
+        if user_db:
+            user_data = user_db.get_user(user_id)
+            if user_data:
+                return {
+                    'user_id': user_data['user_id'],
+                    'tier': user_data['tier'],
+                    'tier_display_name': user_data.get('tier_display_name', 'Unknown'),
+                    'predictions_used': user_data['predictions_used'],
+                    'predictions_remaining': user_data['predictions_remaining'],
+                    'max_predictions': user_data['max_predictions'],
+                    'is_active': user_data['is_active'],
+                    'next_reset': user_data.get('reset_date', 'Unknown'),
+                    'premium_key': user_data.get('premium_key')
+                }
+        
+        return {'tier': 'unknown', 'is_active': False}
+    
+    except Exception as e:
+        logger.error(f"Error getting user status: {e}")
+        return {'tier': 'unknown', 'is_active': False}
+
+def use_user_prediction(user_id: str, session_id: str = None) -> bool:
+    """
+    Use a prediction for a user
+    
+    Args:
+        user_id (str): User ID
+        session_id (str): Optional session ID for tracking
+    
+    Returns:
+        bool: True if successful
+    """
+    try:
+        if 'user_db' not in st.session_state:
+            st.session_state.user_db = initialize_user_database()
+        
+        user_db = st.session_state.user_db
+        if user_db:
+            return user_db.use_prediction(user_id, session_id)
+        
+        return False
+    
+    except Exception as e:
+        logger.error(f"Error using prediction: {e}")
+        return False
+
+
+
 class EnhancedAnalyticsSuite:
     """Advanced Analytics Suite with Enhanced Capabilities and Robust Simulation"""
     
