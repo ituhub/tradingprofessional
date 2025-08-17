@@ -45,6 +45,9 @@ from riskanalysis import AdvancedRiskAnalyzer, RiskVisualization, RiskMetrics
 # Add this import at the top of fixedui.py
 from disclaimer import InvestmentDisclaimer, DisclaimerValidator
 
+# Import from local user_database
+from user_database import UserDatabase
+
 # Import from premium_keys module
 from premium_keys import (
     validate_premium_access, 
@@ -1023,6 +1026,18 @@ class ProfessionalSubscriptionManager:
     @staticmethod
     def validate_premium_access(key: str) -> Dict[str, Any]:
         """Validate premium key using external validation module"""
+        
+        user_db = UserDatabase()
+        user = user_db.get_user(user_id)
+    
+        # If no user found, return invalid access
+        if not user:
+            return {
+                'valid': False,
+                'tier': UserTier.FREE.name.lower(),
+                'message': 'User ID not found in system'
+            }
+        
         # First, use the validate_premium_access function from premium_keys module
         external_validation = validate_premium_access(key)
 
@@ -1058,6 +1073,36 @@ class ProfessionalSubscriptionManager:
 
         # If no validation passes, return invalid key
         return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
+    
+def use_premium_prediction(user_id: str) -> bool:
+    user_db = UserDatabase()
+    return user_db.use_prediction(user_id)
+
+def get_user_prediction_status(user_id: str) -> Dict[str, Any]:
+    user_db = UserDatabase()
+    user = user_db.get_user(user_id)
+    
+    if not user:
+        return {
+            'user_id': user_id,
+            'tier': 'unknown',
+            'predictions_used': 0,
+            'max_predictions': 0,
+            'predictions_remaining': 0,
+            'is_active': False
+        }
+    
+    # Return user status details
+    return {
+        'user_id': user_id,
+        'tier': user['tier'],
+        'predictions_used': user['predictions_used'],
+        'max_predictions': user['max_predictions'],
+        'predictions_remaining': user['predictions_remaining'],
+        'is_active': user['is_active'],
+        'last_used': user['last_used'],
+        'reset_date': user['reset_date']
+    }
 
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
