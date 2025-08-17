@@ -42,7 +42,7 @@ from session_state_manager import initialize_session_state, reset_session_state,
 
 from riskanalysis import AdvancedRiskAnalyzer, RiskVisualization, RiskMetrics
 
-from user_database import UserDatabase
+from shared.user_database import UserDatabase
 
 # Add this import at the top of fixedui.py
 from disclaimer import InvestmentDisclaimer, DisclaimerValidator
