@@ -40,9 +40,6 @@ from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
 
-from premium_keys import validate_premium_key
-
-
 # Import mobile optimization modules
 from mobile_optimizations import (
     apply_mobile_optimizations, 
