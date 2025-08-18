@@ -5625,80 +5625,80 @@ def create_main_content():
     col1, col2 = st.columns([1, 4])
     
     with col2:
-    # Simplified tab creation to avoid IndexError
-    if st.session_state.subscription_tier == 'premium':
-        # Check if User Management is available
-        subscription_info = st.session_state.subscription_info
-        features = subscription_info.get('features', []) if subscription_info else []
-        has_user_management = any('User' in str(feature) for feature in features)
-        
-        if has_user_management:
-            # Premium with User Management
-            main_tabs = st.tabs([
-                "🎯 Prediction", 
-                "📊 Analytics", 
-                "💼 Portfolio", 
-                "📈 Backtesting",
-                "👥 User Management"
-            ])
+        # Simplified tab creation to avoid IndexError
+        if st.session_state.subscription_tier == 'premium':
+            # Check if User Management is available
+            subscription_info = st.session_state.subscription_info
+            features = subscription_info.get('features', []) if subscription_info else []
+            has_user_management = any('User' in str(feature) for feature in features)
             
-            # Tab 0: Prediction
-            with main_tabs[0]:
-                create_enhanced_prediction_section()
-            
-            # Tab 1: Analytics
-            with main_tabs[1]:
-                create_advanced_analytics_section()
-            
-            # Tab 2: Portfolio
-            with main_tabs[2]:
-                create_portfolio_management_section()
-            
-            # Tab 3: Backtesting
-            with main_tabs[3]:
-                create_backtesting_section()
-            
-            # Tab 4: User Management
-            with main_tabs[4]:
-                try:
-                    # Try to import and use user management
-                    from user_management import create_user_management_section
-                    create_user_management_section()
-                except ImportError:
-                    st.error("❌ User Management module not found")
-                    st.info("💡 To enable User Management:")
-                    st.code("1. Create user_management.py file\n2. Add the user management code\n3. Redeploy your app")
+            if has_user_management:
+                # Premium with User Management
+                main_tabs = st.tabs([
+                    "🎯 Prediction", 
+                    "📊 Analytics", 
+                    "💼 Portfolio", 
+                    "📈 Backtesting",
+                    "👥 User Management"
+                ])
+                
+                # Tab 0: Prediction
+                with main_tabs[0]:
+                    create_enhanced_prediction_section()
+                
+                # Tab 1: Analytics
+                with main_tabs[1]:
+                    create_advanced_analytics_section()
+                
+                # Tab 2: Portfolio
+                with main_tabs[2]:
+                    create_portfolio_management_section()
+                
+                # Tab 3: Backtesting
+                with main_tabs[3]:
+                    create_backtesting_section()
+                
+                # Tab 4: User Management
+                with main_tabs[4]:
+                    try:
+                        # Try to import and use user management
+                        from user_management import create_user_management_section
+                        create_user_management_section()
+                    except ImportError:
+                        st.error("❌ User Management module not found")
+                        st.info("💡 To enable User Management:")
+                        st.code("1. Create user_management.py file\n2. Add the user management code\n3. Redeploy your app")
+                        
+            else:
+                # Premium without User Management
+                main_tabs = st.tabs([
+                    "🎯 Prediction", 
+                    "📊 Analytics", 
+                    "💼 Portfolio", 
+                    "📈 Backtesting"
+                ])
+                
+                # Tab content
+                with main_tabs[0]:
+                    create_enhanced_prediction_section()
+                with main_tabs[1]:
+                    create_advanced_analytics_section()
+                with main_tabs[2]:
+                    create_portfolio_management_section()
+                with main_tabs[3]:
+                    create_backtesting_section()
                     
         else:
-            # Premium without User Management
+            # Free tier
             main_tabs = st.tabs([
                 "🎯 Prediction", 
-                "📊 Analytics", 
-                "💼 Portfolio", 
-                "📈 Backtesting"
+                "📊 Basic Analytics"
             ])
             
-            # Tab content
             with main_tabs[0]:
                 create_enhanced_prediction_section()
             with main_tabs[1]:
-                create_advanced_analytics_section()
-            with main_tabs[2]:
-                create_portfolio_management_section()
-            with main_tabs[3]:
-                create_backtesting_section()
-                
-    else:
-        # Free tier
-        main_tabs = st.tabs([
-            "🎯 Prediction", 
-            "📊 Basic Analytics"
-        ])
-        
-        with main_tabs[0]:
-            create_enhanced_prediction_section()
-        with main_tabs[1]:
-            create_basic_analytics_section()
+                create_basic_analytics_section()
         
         # Continuous real-time data updates
         update_real_time_data()
