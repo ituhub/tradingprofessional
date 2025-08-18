@@ -1016,31 +1016,31 @@ class ProfessionalSubscriptionManager:
     
     @staticmethod
     def validate_premium_key_ext(key: str) -> Dict[str, Any]:
-    """External premium key validation for user management"""
-    
-    # Check if it's the special user management key
-    if key == "UserMgmt_2024":
-        return {
-            'valid': True,
-            'tier': 'premium',
-            'allow_model_management': False,  # Users can't manage models
-            'expires': 'Never',
-            'description': 'User Management Access - Premium Features',
-            'features': [
-                'User Access Control',
-                'Usage Tracking',
-                'Monthly Limits',
-                'User Statistics',
-                'Export Capabilities',
-                'Individual User Management',
-                'API Key Generation',
-                'Status Management'
-            ],
-            'message': 'User Management System Activated!'
-        }
-    
-    # Return invalid for unknown keys
-    return {'valid': False, 'tier': 'free', 'message': 'Invalid key'}
+        """External premium key validation for user management"""
+        
+        # Check if it's the special user management key
+        if key == "UserMgmt_2024":
+            return {
+                'valid': True,
+                'tier': 'premium',
+                'allow_model_management': False,  # Users can't manage models
+                'expires': 'Never',
+                'description': 'User Management Access - Premium Features',
+                'features': [
+                    'User Access Control',
+                    'Usage Tracking',
+                    'Monthly Limits',
+                    'User Statistics',
+                    'Export Capabilities',
+                    'Individual User Management',
+                    'API Key Generation',
+                    'Status Management'
+                ],
+                'message': 'User Management System Activated!'
+            }
+        
+        # Return invalid for unknown keys
+        return {'valid': False, 'tier': 'free', 'message': 'Invalid key'}
 
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
