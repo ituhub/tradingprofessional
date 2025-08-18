@@ -5313,8 +5313,6 @@ def create_professional_footer():
 # =============================================================================
 
 
-import streamlit as st
-
 def initialize_app_components():
     """
     Initialize core application components with error handling.
@@ -5353,158 +5351,35 @@ def configure_page():
 
 def create_sidebar(advanced_app_state):
     """
-    Create the entire sidebar with User ID section at the TOP
+    Create the entire sidebar with all sections
     
     Args:
         advanced_app_state (AdvancedAppState): The advanced app state object
     """
     with st.sidebar:
-        # ========================================================================
-        # USER ACCESS SECTION - NOW AT THE TOP
-        # ========================================================================
-        st.header("🔐 User Access")
-        
-        # User ID input at the very top
-        user_id = st.text_input(
-            "Enter Your User ID",
-            placeholder="USER_001 or ATPS_A1B2C3D4",
-            help="Enter your assigned User ID to access AI predictions",
-            key="user_id_input_sidebar"
-        )
-        
-        # Real-time user status display
-        if user_id:
-            # Initialize user manager if not exists
-            if 'user_manager' not in st.session_state:
-                try:
-                    st.session_state.user_manager = EnhancedUserManager()
-                except:
-                    # Fallback if EnhancedUserManager not available
-                    st.warning("User management system not fully loaded")
-                    st.session_state.current_user_id = user_id
-                    return
-            
-            user_manager = st.session_state.user_manager
-            validation = user_manager.validate_user(user_id)
-            
-            if validation['valid']:
-                user = validation['user']
-                remaining = user['monthly_limit'] - user['usage']
-                
-                # Success status with user info
-                st.success(f"✅ Welcome, {user['name']}!")
-                
-                # Usage progress bar
-                usage_percent = (user['usage'] / user['monthly_limit']) * 100
-                st.progress(usage_percent / 100)
-                st.caption(f"📊 {user['usage']}/{user['monthly_limit']} predictions used ({remaining} remaining)")
-                
-                # Tier badge
-                if user['tier'] == 'premium':
-                    st.markdown("⭐ **Premium User**")
-                else:
-                    st.markdown("🆓 **Free Tier User**")
-                
-                # Store user ID in session for global access
-                st.session_state.current_user_id = user_id
-                
-                # Warning if close to limit
-                if remaining <= 2 and remaining > 0:
-                    st.warning(f"⚠️ Only {remaining} predictions left!")
-                elif remaining <= 0:
-                    st.error("🚫 Monthly limit reached!")
-                
-                # Last used info
-                if user.get('last_used'):
-                    last_used = user['last_used'][:10]  # Just the date part
-                    st.caption(f"🕒 Last used: {last_used}")
-                
-            else:
-                st.error(f"❌ {validation['reason']}")
-                st.session_state.current_user_id = None
-                
-                # Help text for common issues
-                if "not found" in validation['reason'].lower():
-                    st.info("💡 **User ID not found.** Contact your administrator for a valid User ID.")
-                elif "suspended" in validation['reason'].lower():
-                    st.info("💡 **Account suspended.** Contact administrator to reactivate your account.")
-                elif "limit exceeded" in validation['reason'].lower():
-                    st.info("💡 **Monthly limit reached.** Wait for next month or contact administrator.")
-        else:
-            st.info("👆 **Enter your User ID above to get started**")
-            st.session_state.current_user_id = None
-            
-            # Show example User IDs
-            with st.expander("❓ Don't have a User ID?"):
-                st.markdown("**Contact your administrator to get a User ID like:**")
-                st.code("USER_001")
-                st.code("ATPS_A1B2C3D4E5F6")
-                st.code("ALPHA_1215_01")
-                st.markdown("*User IDs are provided by administrators through the User Management system.*")
-        
-        # Quick actions for logged-in users
-        if user_id and st.session_state.get('current_user_id'):
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 Refresh", key="refresh_user_status", help="Update usage status"):
-                    st.rerun()
-            with col2:
-                if st.button("🚪 Logout", key="logout_user", help="Clear user session"):
-                    st.session_state.current_user_id = None
-                    st.rerun()
-        
-        st.markdown("---")
-        
-        # ========================================================================
-        # SUBSCRIPTION MANAGEMENT SECTION (for admins)
-        # ========================================================================
-        st.header("🔑 Admin Access")
-        st.caption("For administrators only")
+        # Subscription Management Section
+        st.header("🔑 Subscription Management")
         
         if st.session_state.subscription_tier == 'premium':
             _create_premium_sidebar(advanced_app_state)
         else:
             _create_free_tier_sidebar(advanced_app_state)
         
-        # ========================================================================
-        # ASSET SELECTION SECTION
-        # ========================================================================
+        # Asset Selection Section
         st.markdown("---")
         st.header("📈 Asset Selection")
         _create_asset_selection_sidebar()
         
-        # ========================================================================
-        # SYSTEM STATISTICS SECTION
-        # ========================================================================
+        # System Statistics Section
         st.markdown("---")
         st.header("📊 Session Statistics")
         _create_system_statistics_sidebar()
         
-        # Add current user's personal stats if logged in
-        if st.session_state.get('current_user_id') and 'user_manager' in st.session_state:
-            user_manager = st.session_state.user_manager
-            if st.session_state.current_user_id in user_manager.users:
-                user = user_manager.users[st.session_state.current_user_id]
-                st.markdown("#### 👤 Your Statistics")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Usage This Month", f"{user['usage']}")
-                    st.metric("Account Status", user['status'].title())
-                with col2:
-                    st.metric("Monthly Limit", f"{user['monthly_limit']}")
-                    st.metric("Account Tier", user['tier'].title())
-        
-        # ========================================================================
-        # ADDITIONAL PREMIUM FEATURES (if applicable)
-        # ========================================================================
+        # Additional Premium Features (if applicable)
         if st.session_state.subscription_tier == 'premium':
             st.markdown("---")
             st.header("🔄 Real-time Status")
             _create_premium_realtime_status()
-
-
-# Keep all your existing helper functions unchanged:
 
 def _create_premium_sidebar(advanced_app_state):
     """
@@ -5513,25 +5388,18 @@ def _create_premium_sidebar(advanced_app_state):
     Args:
         advanced_app_state (AdvancedAppState): The advanced app state object
     """
-    st.success("✅ **ADMIN ACCESS ACTIVE**")
-    st.markdown("**Admin Features Unlocked:**")
+    st.success("✅ **PREMIUM ACTIVE**")
+    st.markdown("**Features Unlocked:**")
     features = st.session_state.subscription_info.get('features', [])
-    for feature in features[:6]:  # Show first 6 features
+    for feature in features[:8]:  # Show first 8 features
         st.markdown(f"• {feature}")
     
-    # Show more features in expander if there are many
-    if len(features) > 6:
-        with st.expander(f"See all {len(features)} features"):
-            for feature in features[6:]:
-                st.markdown(f"• {feature}")
-    
     # Deactivate premium button
-    if st.button("🔓 Deactivate Admin", key="deactivate_premium"):
+    if st.button("🔓 Deactivate Premium", key="deactivate_premium"):
         st.session_state.subscription_tier = 'free'
         st.session_state.premium_key = ''
         st.session_state.subscription_info = {}
         st.rerun()
-
 
 def _create_free_tier_sidebar(advanced_app_state):
     """
@@ -5546,74 +5414,84 @@ def _create_free_tier_sidebar(advanced_app_state):
 
     # Always show disclaimer if not consented
     if not st.session_state.disclaimer_consented:
-        # Simplified disclaimer for admin access
-        st.warning("⚠️ **ADMIN RESPONSIBILITY WARNING**")
+        # Large, attention-grabbing disclaimer
+        st.markdown("""
+        ## 🚨 CRITICAL INVESTMENT RISK WARNING
         
-        with st.expander("📋 Admin Terms & Responsibilities", expanded=True):
-            st.markdown("""
-            **By accessing admin features, you acknowledge:**
-            
-            🔐 **Administrative Authority**
-            - You have permission to manage user access
-            - User data privacy is your responsibility
-            
-            📊 **Platform Usage** 
-            - This platform provides AI predictions for informational purposes only
-            - NOT financial advice or guaranteed investment recommendations
-            
-            👥 **User Management**
-            - Monitor user activity appropriately
-            - Protect user credentials and data
-            
-            ⚖️ **Legal Compliance**
-            - Ensure compliance with local regulations
-            - Users are responsible for their own trading decisions
-            """)
+        ### PLEASE READ CAREFULLY
         
-        # Simplified consent mechanism
+        ⚠️ **By using this platform, you acknowledge:**
+        
+        1. 📊 **Algorithmic Predictions**: 
+           - NOT guaranteed investment recommendations
+           - Based on historical data and current market conditions
+        
+        2. 💸 **Financial Risk**: 
+           - Significant potential for capital loss
+           - All investments carry inherent risks
+        
+        3. 🔮 **No Guaranteed Returns**: 
+           - Past performance does NOT predict future results
+           - Market conditions can change rapidly
+        
+        4. 🧠 **AI Limitations**: 
+           - Cannot predict unexpected market events
+           - Subject to data and model constraints
+        
+        5. 👤 **Personal Responsibility**: 
+           - YOU are solely responsible for ALL investment decisions
+           - Platform is for informational purposes only
+        
+        ### CONSENT REQUIRED
+        """)
+        
+        # Consent mechanism
         consent_col1, consent_col2 = st.columns(2)
         
         with consent_col1:
             consent = st.button(
-                "✅ I UNDERSTAND", 
-                key="disclaimer_consent_admin", 
+                "✅ I FULLY UNDERSTAND & CONSENT", 
+                key="disclaimer_consent_full", 
                 type="primary",
-                help="Confirm you understand admin responsibilities"
+                help="Confirm you've read and understand the risks"
             )
         
         with consent_col2:
             decline = st.button(
-                "❌ DECLINE", 
-                key="disclaimer_decline_admin", 
+                "❌ I DO NOT CONSENT", 
+                key="disclaimer_decline_full", 
                 type="secondary",
-                help="Exit admin access"
+                help="Exit the platform if you do not agree to the terms"
             )
         
         # Handle consent
         if consent:
+            # Directly set the consent flag
             st.session_state.disclaimer_consented = True
-            st.rerun()
+            # Clear any previous error messages
+            st.empty()
         
         # Handle decline
         if decline:
-            st.error("Admin access denied.")
+            st.error("Access denied. You must consent to use the platform.")
+            # Optionally, you could add a way to exit or redirect
             return
         
         # If not consented, stop further execution
         return
 
     # Premium key activation (only shown after consent)
-    st.info("🔑 **Enter Admin Key**")
+    st.info("🔑 Premium Activation")
     
     premium_key = st.text_input(
-        "Admin Key",
+        "Enter Premium Key",
         type="password",
         value=st.session_state.get('premium_key', ''),
         key="sidebar_premium_key_input",
-        help="Enter admin key for premium features"
+        help="Enter predefined or external premium key"
     )
     
-    if st.button("🚀 Activate Admin", type="primary", key="activate_premium_button"):
+    if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
         # Validation process
         external_validation = validate_premium_key_ext(premium_key)
         
@@ -5629,23 +5507,14 @@ def _create_free_tier_sidebar(advanced_app_state):
         if external_validation['valid']:
             success = advanced_app_state.update_subscription(premium_key)
             if success:
-                st.success("Admin access activated!")
+                st.success("Premium activated successfully!")
+                # Store the key for potential future use
                 st.session_state.premium_key = premium_key
-                st.rerun()
             else:
-                st.error("Invalid admin key. Please try again.")
+                st.error("Invalid premium key. Please try again.")
         else:
-            st.error("Invalid admin key. Please check and try again.")
-    
-    # Show available admin keys
-    with st.expander("🔑 Available Admin Keys"):
-        st.caption("Use these keys to unlock admin features:")
-        st.code("UserMgmt_2024     # User Management")
-        st.code("SuperAdmin_2024   # All Features") 
-        st.code("Prem246_357       # Original Premium")
+            st.error("Invalid premium key. Please check and try again.")
 
-
-# Keep your existing helper functions unchanged:
 def _create_asset_selection_sidebar():
     """
     Create asset selection sidebar section.
@@ -5692,7 +5561,6 @@ def _create_asset_selection_sidebar():
     if timeframe != st.session_state.selected_timeframe:
         st.session_state.selected_timeframe = timeframe
 
-
 def _create_system_statistics_sidebar():
     """
     Create system statistics sidebar section.
@@ -5706,7 +5574,6 @@ def _create_system_statistics_sidebar():
     with col2:
         st.metric("Backtests", stats.get('backtests', 0))
         st.metric("CV Runs", stats.get('cv_runs', 0))
-
 
 def _create_premium_realtime_status():
     """
@@ -5737,54 +5604,6 @@ def _create_premium_realtime_status():
                 st.error(f"Error refreshing data: {e}")
         else:
             st.warning("Backend data manager not available")
-
-
-# Also update your create_enhanced_prediction_section to check for user login:
-def create_enhanced_prediction_section():
-    """Enhanced prediction section with user validation"""
-    
-    # Check if user is logged in at the start
-    current_user_id = st.session_state.get('current_user_id')
-    
-    if not current_user_id:
-        st.warning("⚠️ **Please enter your User ID in the sidebar to access AI predictions**")
-        
-        # Show helpful information
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info("💡 **Steps to get started:**\n\n1. Enter your User ID in the sidebar\n2. Your usage will be tracked automatically\n3. Start making AI predictions!")
-        
-        with col2:
-            st.info("❓ **Need a User ID?**\n\nContact your administrator or:\n- Use admin key in sidebar\n- Go to User Management tab\n- Generate User IDs")
-        
-        return
-    
-    # Validate user access before proceeding
-    if 'user_manager' in st.session_state:
-        user_manager = st.session_state.user_manager
-        validation = user_manager.validate_user(current_user_id)
-        
-        if not validation['valid']:
-            st.error(f"❌ **Access Denied:** {validation['reason']}")
-            
-            # Show helpful actions based on the issue
-            if "limit exceeded" in validation['reason'].lower():
-                st.info("💡 **Your monthly limit has been reached.** Please wait for next month or contact your administrator.")
-            elif "suspended" in validation['reason'].lower():
-                st.info("💡 **Your account is suspended.** Please contact your administrator for reactivation.")
-            
-            return
-    
-    # Show current user info at the top
-    if 'user_manager' in st.session_state and current_user_id in st.session_state.user_manager.users:
-        user = st.session_state.user_manager.users[current_user_id]
-        remaining = user['monthly_limit'] - user['usage']
-        
-        # User info banner
-        st.success(f"🎯 **Active User:** {user['name']} | **Tier:** {user['tier'].title()} | **Remaining Predictions:** {remaining}")
-    
-    # Continue with the rest of your existing prediction code...
-    st.header("🤖 Advanced AI Prediction Engine")
 
 def create_main_content():
     """
