@@ -922,6 +922,8 @@ logging.basicConfig(
 # =============================================================================
 
 
+# Replace your current ProfessionalSubscriptionManager class with this corrected version:
+
 class ProfessionalSubscriptionManager:
     """Enhanced subscription management with full feature access"""
     
@@ -1012,35 +1014,91 @@ class ProfessionalSubscriptionManager:
 
         # If no validation passes, return invalid key
         return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
+
+
+# ADD THIS FUNCTION OUTSIDE THE CLASS (after the class ends):
+def validate_premium_key_ext(key: str) -> Dict[str, Any]:
+    """External premium key validation for user management and additional features"""
     
+    # Check if it's the special user management key
+    if key == "UserMgmt_2024":
+        return {
+            'valid': True,
+            'tier': 'premium',
+            'allow_model_management': False,  # Users can't manage models
+            'expires': 'Never',
+            'description': 'User Management Access - Premium Features',
+            'features': [
+                'User Access Control',
+                'Usage Tracking',
+                'Monthly Limits',
+                'User Statistics',
+                'Export Capabilities',
+                'Individual User Management',
+                'API Key Generation',
+                'Status Management'
+            ],
+            'message': 'User Management System Activated!'
+        }
     
-    @staticmethod
-    def validate_premium_key_ext(key: str) -> Dict[str, Any]:
-        """External premium key validation for user management"""
-        
-        # Check if it's the special user management key
-        if key == "UserMgmt_2024":
-            return {
-                'valid': True,
-                'tier': 'premium',
-                'allow_model_management': False,  # Users can't manage models
-                'expires': 'Never',
-                'description': 'User Management Access - Premium Features',
-                'features': [
-                    'User Access Control',
-                    'Usage Tracking',
-                    'Monthly Limits',
-                    'User Statistics',
-                    'Export Capabilities',
-                    'Individual User Management',
-                    'API Key Generation',
-                    'Status Management'
-                ],
-                'message': 'User Management System Activated!'
-            }
-        
-        # Return invalid for unknown keys
-        return {'valid': False, 'tier': 'free', 'message': 'Invalid key'}
+    # Check for other special keys (you can add more here)
+    elif key == "SuperAdmin_2024":
+        return {
+            'valid': True,
+            'tier': 'premium',
+            'allow_model_management': True,  # Full access including model management
+            'expires': 'Never',
+            'description': 'Super Admin Access - All Features',
+            'features': [
+                '8 Advanced AI Models',
+                'Real-time Cross-validation',
+                'SHAP Model Explanations',
+                'Advanced Risk Analytics',
+                'Market Regime Detection',
+                'Model Drift Detection',
+                'Portfolio Optimization',
+                'Real-time Alternative Data',
+                'Multi-timeframe Analysis',
+                'High-frequency Features',
+                'Economic Indicators',
+                'Sentiment Analysis',
+                'Options Flow Data',
+                'Meta-learning Ensemble',
+                'User Management System',
+                'Model Training & Management'
+            ],
+            'message': 'Super Admin Access Granted - All Features Unlocked!'
+        }
+    
+    # Add support for your original key too
+    elif key == "Prem246_357":
+        return {
+            'valid': True,
+            'tier': 'premium',
+            'allow_model_management': True,
+            'expires': 'Never',
+            'description': 'Professional AI Trading System - Full Backend Integration',
+            'features': [
+                '8 Advanced AI Models',
+                'Real-time Cross-validation',
+                'SHAP Model Explanations',
+                'Advanced Risk Analytics',
+                'Market Regime Detection',
+                'Model Drift Detection',
+                'Portfolio Optimization',
+                'Real-time Alternative Data',
+                'Multi-timeframe Analysis',
+                'High-frequency Features',
+                'Economic Indicators',
+                'Sentiment Analysis',
+                'Options Flow Data',
+                'Meta-learning Ensemble'
+            ],
+            'message': 'Welcome to the fully integrated Professional AI Trading System!'
+        }
+    
+    # Return invalid for unknown keys
+    return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
 
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
