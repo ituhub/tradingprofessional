@@ -40,6 +40,9 @@ from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
 
+# Add this import after your existing imports in fixedui.py
+from user_management import create_user_management_section, user_access_middleware, UserManager
+
 # Import mobile optimization modules
 from mobile_optimizations import (
     apply_mobile_optimizations, 
@@ -1009,6 +1012,35 @@ class ProfessionalSubscriptionManager:
 
         # If no validation passes, return invalid key
         return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
+    
+    
+    @staticmethod
+    def validate_premium_key_ext(key: str) -> Dict[str, Any]:
+    """External premium key validation for user management"""
+    
+    # Check if it's the special user management key
+    if key == "UserMgmt_2024":
+        return {
+            'valid': True,
+            'tier': 'premium',
+            'allow_model_management': False,  # Users can't manage models
+            'expires': 'Never',
+            'description': 'User Management Access - Premium Features',
+            'features': [
+                'User Access Control',
+                'Usage Tracking',
+                'Monthly Limits',
+                'User Statistics',
+                'Export Capabilities',
+                'Individual User Management',
+                'API Key Generation',
+                'Status Management'
+            ],
+            'message': 'User Management System Activated!'
+        }
+    
+    # Return invalid for unknown keys
+    return {'valid': False, 'tier': 'free', 'message': 'Invalid key'}
 
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
@@ -2692,6 +2724,45 @@ def create_enhanced_sidebar():
 
 def create_enhanced_prediction_section():
     """Enhanced prediction section with full backend integration"""
+    
+    # Add user authentication
+    st.sidebar.markdown("---")
+    st.sidebar.header("🔐 User Access")
+    
+    user_id = st.sidebar.text_input(
+        "Enter User ID",
+        placeholder="USER_001",
+        help="Enter your assigned User ID to access AI predictions",
+        key="user_id_input"
+    )
+    
+    if not user_id:
+        st.warning("⚠️ Please enter your User ID in the sidebar to access AI predictions")
+        st.info("💡 **Get your User ID from the User Management tab (Premium users only)**")
+        return
+    
+    # Validate user access
+    if not user_access_middleware(user_id):
+        st.error("❌ Access denied. Check your User ID or contact administrator.")
+        return
+    
+    # Show user info in sidebar
+    if 'user_manager' in st.session_state:
+        user_manager = st.session_state.user_manager
+        if user_id in user_manager.users:
+            user = user_manager.users[user_id]
+            remaining = user['monthly_limit'] - user['usage']
+            
+            st.sidebar.success(f"✅ Welcome, {user['name']}")
+            st.sidebar.info(f"🎯 Predictions remaining: {remaining}/{user['monthly_limit']}")
+            
+            if user['tier'] == 'premium':
+                st.sidebar.success("⭐ Premium User")
+            
+            # Store current user in session state
+            st.session_state.current_user_id = user_id
+    
+    
     st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
@@ -5508,7 +5579,7 @@ def create_main_content():
                     "📊 Analytics", 
                     "💼 Portfolio", 
                     "📈 Backtesting",
-                    "🔧 Model Management"
+                    "👥 User Management"
                 ])
             else:
                 # Tabs without Model Management
@@ -5542,6 +5613,9 @@ def create_main_content():
             
             with main_tabs[3]:
                 create_backtesting_section()
+                
+            with main_tabs[4]:  # Adjust index based on your tabs
+                create_user_management_section()    
             
             # Only create Model Management section if allowed
             if allow_model_management:
@@ -5585,4 +5659,3 @@ def main():
 # Main execution
 if __name__ == "__main__":
     main()
-
