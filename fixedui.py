@@ -40,8 +40,12 @@ from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
 
-# Add this import after your existing imports in fixedui.py
-from user_management import create_user_management_section, user_access_middleware, UserManager
+try:
+    from user_management import create_user_management_section, user_access_middleware, EnhancedUserManager
+    USER_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    USER_MANAGEMENT_AVAILABLE = False
+    print("User management module not found - features will be disabled")
 
 # Import mobile optimization modules
 from mobile_optimizations import (
