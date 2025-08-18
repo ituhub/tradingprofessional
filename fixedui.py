@@ -5625,60 +5625,80 @@ def create_main_content():
     col1, col2 = st.columns([1, 4])
     
     with col2:
-        # Dynamically create tabs based on subscription tier and key features
-        if st.session_state.subscription_tier == 'premium':
-            # Check if Model Management is allowed
-            allow_model_management = st.session_state.subscription_info.get('allow_model_management', False)
-            
-            if allow_model_management:
-                # Full tabs including Model Management
-                main_tabs = st.tabs([
-                    "🎯 Prediction", 
-                    "📊 Analytics", 
-                    "💼 Portfolio", 
-                    "📈 Backtesting",
-                    "👥 User Management"
-                ])
-            else:
-                # Tabs without Model Management
-                main_tabs = st.tabs([
-                    "🎯 Prediction", 
-                    "📊 Analytics", 
-                    "💼 Portfolio", 
-                    "📈 Backtesting"
-                ])
-        else:
-            # Free tier tabs
+    # Simplified tab creation to avoid IndexError
+    if st.session_state.subscription_tier == 'premium':
+        # Check if User Management is available
+        subscription_info = st.session_state.subscription_info
+        features = subscription_info.get('features', []) if subscription_info else []
+        has_user_management = any('User' in str(feature) for feature in features)
+        
+        if has_user_management:
+            # Premium with User Management
             main_tabs = st.tabs([
                 "🎯 Prediction", 
-                "📊 Basic Analytics"
+                "📊 Analytics", 
+                "💼 Portfolio", 
+                "📈 Backtesting",
+                "👥 User Management"
             ])
-        
-        # Tab content
-        with main_tabs[0]:
-            create_enhanced_prediction_section()
-        
-        with main_tabs[1]:
-            if st.session_state.subscription_tier == 'premium':
+            
+            # Tab 0: Prediction
+            with main_tabs[0]:
+                create_enhanced_prediction_section()
+            
+            # Tab 1: Analytics
+            with main_tabs[1]:
                 create_advanced_analytics_section()
-            else:
-                create_basic_analytics_section()
-        
-        # Premium-only tabs
-        if st.session_state.subscription_tier == 'premium':
+            
+            # Tab 2: Portfolio
             with main_tabs[2]:
                 create_portfolio_management_section()
             
+            # Tab 3: Backtesting
+            with main_tabs[3]:
+                create_backtesting_section()
+            
+            # Tab 4: User Management
+            with main_tabs[4]:
+                try:
+                    # Try to import and use user management
+                    from user_management import create_user_management_section
+                    create_user_management_section()
+                except ImportError:
+                    st.error("❌ User Management module not found")
+                    st.info("💡 To enable User Management:")
+                    st.code("1. Create user_management.py file\n2. Add the user management code\n3. Redeploy your app")
+                    
+        else:
+            # Premium without User Management
+            main_tabs = st.tabs([
+                "🎯 Prediction", 
+                "📊 Analytics", 
+                "💼 Portfolio", 
+                "📈 Backtesting"
+            ])
+            
+            # Tab content
+            with main_tabs[0]:
+                create_enhanced_prediction_section()
+            with main_tabs[1]:
+                create_advanced_analytics_section()
+            with main_tabs[2]:
+                create_portfolio_management_section()
             with main_tabs[3]:
                 create_backtesting_section()
                 
-            with main_tabs[4]:  # Adjust index based on your tabs
-                create_user_management_section()    
-            
-            # Only create Model Management section if allowed
-            if allow_model_management:
-                with main_tabs[-1]:  # Last tab if Model Management is present
-                    create_model_management_section()
+    else:
+        # Free tier
+        main_tabs = st.tabs([
+            "🎯 Prediction", 
+            "📊 Basic Analytics"
+        ])
+        
+        with main_tabs[0]:
+            create_enhanced_prediction_section()
+        with main_tabs[1]:
+            create_basic_analytics_section()
         
         # Continuous real-time data updates
         update_real_time_data()
