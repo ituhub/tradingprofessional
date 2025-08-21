@@ -17,8 +17,6 @@ import pickle
 import re
 import torch
 import joblib
-import time
-import logging
 import io
 import queue
 import traceback
@@ -36,16 +34,30 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from sklearn.preprocessing import MinMaxScaler
 
+# =============================================================================
+# ENHANCED LOGGING SETUP (MUST BE FIRST)
+# =============================================================================
+
+# Enhanced logging setup - moved to the top to avoid NameError
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('ai_trading_professional.log', mode='a')
+    ]
+)
+
+# Create logger instance
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# CORE IMPORTS (After logging setup)
+# =============================================================================
+
 from keep_alive import AppKeepAlive
 
 from session_state_manager import initialize_session_state, reset_session_state, update_session_state
-
-try:
-    from user_management import create_user_management_section, user_access_middleware, EnhancedUserManager
-    USER_MANAGEMENT_AVAILABLE = True
-except ImportError:
-    USER_MANAGEMENT_AVAILABLE = False
-    print("User management module not found - features will be disabled")
 
 # Import mobile optimization modules
 from mobile_optimizations import (
@@ -55,6 +67,151 @@ from mobile_optimizations import (
 )
 from mobile_config import create_mobile_config_manager
 from mobile_performance import create_mobile_performance_optimizer
+
+# =============================================================================
+# USER MANAGEMENT IMPORTS - ENHANCED INTEGRATION
+# =============================================================================
+
+try:
+    from user_management import (
+        # Core Classes
+        EnhancedUserManager,
+        
+        # Main Interface Functions
+        create_user_management_section,
+        create_advanced_prediction_interface,
+        create_comprehensive_user_management,
+        create_prediction_interface_with_click_tracking,
+        
+        # Middleware Functions
+        enhanced_user_prediction_middleware,
+        user_prediction_middleware,
+        enhanced_user_access_middleware,
+        user_access_middleware,
+        admin_user_access_middleware,
+        management_key_middleware,
+        
+        # Action Functions
+        record_user_prediction_click,
+        get_user_status,
+        safe_get_user_status,
+        
+        # Utility Functions
+        quick_setup_demo_environment,
+        display_quick_user_ids,
+        generate_user_credentials_email,
+        log_user_action,
+        monitor_system_performance
+    )
+    
+    USER_MANAGEMENT_AVAILABLE = True
+    logger.info("✅ Enhanced user management module imported successfully")
+    
+except ImportError as e:
+    USER_MANAGEMENT_AVAILABLE = False
+    logger.error(f"⚠️ User management import failed: {e}")
+    logger.info("💡 Creating fallback user management functions...")
+    
+    # Fallback functions when user_management.py is not available
+    def user_access_middleware(user_id: str) -> bool:
+        """Fallback middleware - always returns True"""
+        return True
+    
+    def enhanced_user_prediction_middleware(user_id: str) -> bool:
+        """Fallback middleware - always returns True"""
+        return True
+    
+    def record_user_prediction_click(user_id: str, prediction_data: dict = None):
+        """Fallback click recording"""
+        return True, {'success': True, 'fallback': True}
+    
+    def get_user_status(user_id: str):
+        """Fallback user status"""
+        return {'exists': True, 'fallback': True, 'can_predict': True}
+    
+    def safe_get_user_status(user_id: str):
+        """Safe fallback user status"""
+        return get_user_status(user_id)
+    
+    def create_user_management_section():
+        """Fallback user management section"""
+        st.error("❌ User Management module not found")
+        st.info("💡 To enable User Management:")
+        st.code("""
+1. Ensure user_management.py is in the same directory as fixedui.py
+2. Check that all required dependencies are installed
+3. Restart your Streamlit app
+        """)
+        
+        # Show manual user ID input as fallback
+        st.markdown("### 🔧 Manual User Access (Fallback Mode)")
+        manual_user_id = st.text_input(
+            "Enter any User ID for testing",
+            placeholder="test_user_001",
+            help="In fallback mode, any User ID will work"
+        )
+        
+        if manual_user_id:
+            st.session_state.current_user_id = manual_user_id
+            st.success(f"✅ Fallback user access granted for: {manual_user_id}")
+    
+    class EnhancedUserManager:
+        """Fallback user manager"""
+        def __init__(self):
+            self.users = {}
+
+except Exception as e:
+    USER_MANAGEMENT_AVAILABLE = False
+    logger.error(f"❌ Unexpected error importing user management: {e}")
+    
+    # Same fallback functions as above
+    def user_access_middleware(user_id: str) -> bool:
+        return True
+    
+    def enhanced_user_prediction_middleware(user_id: str) -> bool:
+        return True
+    
+    def record_user_prediction_click(user_id: str, prediction_data: dict = None):
+        return True, {'success': True, 'fallback': True}
+    
+    def get_user_status(user_id: str):
+        return {'exists': True, 'fallback': True, 'can_predict': True}
+    
+    def safe_get_user_status(user_id: str):
+        return get_user_status(user_id)
+    
+    def create_user_management_section():
+        st.error("❌ User Management system error")
+        st.info("Using fallback mode for user access")
+    
+    class EnhancedUserManager:
+        def __init__(self):
+            self.users = {}
+
+# =============================================================================
+# INITIALIZE USER MANAGEMENT (After import success)
+# =============================================================================
+
+def initialize_user_management():
+    """Initialize user management system safely"""
+    if USER_MANAGEMENT_AVAILABLE:
+        # Initialize user manager in session state if not exists
+        if 'enhanced_user_manager' not in st.session_state:
+            st.session_state.enhanced_user_manager = EnhancedUserManager()
+            logger.info("✅ Enhanced user manager initialized")
+        
+        # Auto-setup demo environment if no users exist
+        try:
+            if len(st.session_state.enhanced_user_manager.users) == 0:
+                quick_setup_demo_environment()
+                logger.info("✅ Demo environment auto-setup completed")
+        except Exception as e:
+            logger.warning(f"⚠️ Demo setup failed: {e}")
+    else:
+        logger.info("📊 Running in fallback mode without user management")
+
+# Call initialization function
+initialize_user_management()
 
 
 class EnhancedAnalyticsSuite:
@@ -910,16 +1067,6 @@ except ImportError as e:
     BACKEND_AVAILABLE = False
     logger = logging.getLogger(__name__)
     logger.error(f"⚠️ Backend import failed: {e}")
-
-# Enhanced logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('ai_trading_professional.log', mode='a')
-    ]
-)
 
 # =============================================================================
 # PROFESSIONAL SUBSCRIPTION SYSTEM (Enhanced)
@@ -2785,9 +2932,9 @@ def create_enhanced_sidebar():
 
 
 def create_enhanced_prediction_section():
-    """Enhanced prediction section with full backend integration"""
+    """Enhanced prediction section with full user management integration"""
     
-    # Add user authentication
+    # User authentication section
     st.sidebar.markdown("---")
     st.sidebar.header("🔐 User Access")
     
@@ -2800,17 +2947,28 @@ def create_enhanced_prediction_section():
     
     if not user_id:
         st.warning("⚠️ Please enter your User ID in the sidebar to access AI predictions")
-        st.info("💡 **Get your User ID from the User Management tab (Premium users only)**")
+        
+        if USER_MANAGEMENT_AVAILABLE:
+            st.info("💡 **Get your User ID from the User Management tab (Premium users only)**")
+            
+            # Show quick demo user IDs if available
+            try:
+                display_quick_user_ids()
+            except:
+                pass
+        else:
+            st.info("💡 **Fallback Mode:** Enter any User ID (e.g., 'test_user_001') to continue")
+        
         return
     
-    # Validate user access
-    if not user_access_middleware(user_id):
+    # Validate user access using the imported middleware
+    if not enhanced_user_prediction_middleware(user_id):
         st.error("❌ Access denied. Check your User ID or contact administrator.")
         return
     
-    # Show user info in sidebar
-    if 'user_manager' in st.session_state:
-        user_manager = st.session_state.user_manager
+    # Show user info in sidebar if user management is available
+    if USER_MANAGEMENT_AVAILABLE and 'enhanced_user_manager' in st.session_state:
+        user_manager = st.session_state.enhanced_user_manager
         if user_id in user_manager.users:
             user = user_manager.users[user_id]
             remaining = user['monthly_limit'] - user['usage']
@@ -2823,8 +2981,13 @@ def create_enhanced_prediction_section():
             
             # Store current user in session state
             st.session_state.current_user_id = user_id
+    else:
+        # Fallback mode
+        st.sidebar.info(f"🔧 Fallback Mode Active")
+        st.sidebar.success(f"✅ User: {user_id}")
+        st.session_state.current_user_id = user_id
     
-    
+    # Continue with the existing prediction logic...
     st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
@@ -2874,6 +3037,23 @@ def create_enhanced_prediction_section():
     # Handle prediction
     if predict_button:
         with st.spinner("🔄 Running advanced AI analysis..."):
+            # Record the prediction click using user management
+            if USER_MANAGEMENT_AVAILABLE:
+                prediction_data = {
+                    'symbol': ticker,
+                    'asset_type': asset_type,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                success, click_result = record_user_prediction_click(user_id, prediction_data)
+                
+                if not success:
+                    st.error(f"❌ Prediction failed: {click_result.get('reason', 'Unknown error')}")
+                    return
+                
+                st.info(f"📊 Click recorded: {click_result.get('clicks_remaining', 'N/A')} remaining")
+            
+            # Run the actual prediction
             prediction = RealPredictionEngine.run_real_prediction(
                 ticker, 
                 st.session_state.selected_timeframe,
@@ -5606,9 +5786,7 @@ def _create_premium_realtime_status():
             st.warning("Backend data manager not available")
 
 def create_main_content():
-    """
-    Create the main content area with tabs and sections.
-    """
+    """Create the main content area with tabs and sections."""
     # Mobile and performance optimizations
     is_mobile = is_mobile_device()
     device_type = get_device_type()
@@ -5627,12 +5805,15 @@ def create_main_content():
     col1, col2 = st.columns([1, 4])
     
     with col2:
-        # Simplified tab creation to avoid IndexError
+        # Determine available tabs based on subscription and user management availability
         if st.session_state.subscription_tier == 'premium':
             # Check if User Management is available
             subscription_info = st.session_state.subscription_info
             features = subscription_info.get('features', []) if subscription_info else []
-            has_user_management = any('User' in str(feature) for feature in features)
+            has_user_management = (
+                USER_MANAGEMENT_AVAILABLE and 
+                any('User' in str(feature) for feature in features)
+            )
             
             if has_user_management:
                 # Premium with User Management
@@ -5644,32 +5825,25 @@ def create_main_content():
                     "👥 User Management"
                 ])
                 
-                # Tab 0: Prediction
+                # Tab content
                 with main_tabs[0]:
                     create_enhanced_prediction_section()
                 
-                # Tab 1: Analytics
                 with main_tabs[1]:
                     create_advanced_analytics_section()
                 
-                # Tab 2: Portfolio
                 with main_tabs[2]:
                     create_portfolio_management_section()
                 
-                # Tab 3: Backtesting
                 with main_tabs[3]:
                     create_backtesting_section()
                 
-                # Tab 4: User Management
                 with main_tabs[4]:
-                    try:
-                        # Try to import and use user management
-                        from user_management import create_user_management_section
+                    if USER_MANAGEMENT_AVAILABLE:
                         create_user_management_section()
-                    except ImportError:
-                        st.error("❌ User Management module not found")
-                        st.info("💡 To enable User Management:")
-                        st.code("1. Create user_management.py file\n2. Add the user management code\n3. Redeploy your app")
+                    else:
+                        st.error("❌ User Management module not available")
+                        st.info("💡 Check that user_management.py is properly installed")
                         
             else:
                 # Premium without User Management
