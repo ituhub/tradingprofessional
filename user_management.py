@@ -870,10 +870,6 @@ def create_comprehensive_user_management():
             st.success("✅ Quick demo users created!")
             st.rerun()
     
-    # Show quick access user IDs
-    if len(user_manager.users) > 0:
-        with st.expander("🆔 Quick Access User IDs", expanded=True):
-            display_quick_user_ids()
     
     # Navigation tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
