@@ -792,45 +792,6 @@ def quick_setup_demo_environment():
     
     return False
 
-def display_quick_user_ids():
-    """Display quick access user IDs for testing"""
-    if 'enhanced_user_manager' not in st.session_state:
-        return
-    
-    user_manager = st.session_state.enhanced_user_manager
-    
-    if len(user_manager.users) > 0:
-        st.markdown("### 🆔 Quick Access User IDs")
-        
-        # Group users by tier
-        users_by_tier = {}
-        for user_id, user in user_manager.users.items():
-            tier = user['tier']
-            if tier not in users_by_tier:
-                users_by_tier[tier] = []
-            users_by_tier[tier].append((user_id, user['name']))
-        
-        # Display in columns
-        tiers = list(users_by_tier.keys())
-        if len(tiers) > 0:
-            cols = st.columns(min(len(tiers), 4))
-            
-            for i, tier in enumerate(tiers):
-                with cols[i % 4]:
-                    tier_color = {
-                        'free': '#2196F3',
-                        'premium': '#FF9800', 
-                        'enterprise': '#4CAF50',
-                        'unlimited': '#9C27B0'
-                    }.get(tier, '#666')
-                    
-                    st.markdown(f"**{tier.title()} Users:**")
-                    for user_id, name in users_by_tier[tier][:3]:  # Show max 3 per tier
-                        st.code(user_id)
-                    
-                    if len(users_by_tier[tier]) > 3:
-                        st.caption(f"... and {len(users_by_tier[tier]) - 3} more")
-
 
 # =============================================================================
 # MAIN USER MANAGEMENT INTERFACE - NO ACCESS RESTRICTIONS
