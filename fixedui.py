@@ -2940,7 +2940,7 @@ def create_enhanced_prediction_section():
     
     user_id = st.sidebar.text_input(
         "Enter User ID",
-        placeholder="USER_001",
+        placeholder="xxxxxxx",
         help="Enter your assigned User ID to access AI predictions",
         key="user_id_input"
     )
@@ -2957,7 +2957,7 @@ def create_enhanced_prediction_section():
             except:
                 pass
         else:
-            st.info("💡 **Fallback Mode:** Enter any User ID (e.g., 'test_user_001') to continue")
+            pass  # Fallback mode information removed
         
         return
     
