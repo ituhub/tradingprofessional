@@ -33,7 +33,19 @@ aiohttp
 python-multipart
 fredapi
 python-dateutil
+yfinance
 
+# Additional required packages
+beautifulsoup4
+lxml
+pydantic
+pytz
+psutil
+tqdm
+statsmodels
+numba
+dill
+ujson
 
 # NiceGUI core dependencies
 fastapi
