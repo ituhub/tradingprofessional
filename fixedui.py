@@ -17,14 +17,19 @@ import pickle
 import re
 import torch
 import joblib
+import sys
 import io
 import queue
 import traceback
+import MetaTrader5 as mt5
+from enum import Enum
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 import warnings
 warnings.filterwarnings("ignore")
+
+os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 import numpy as np
 import pandas as pd
@@ -33,6 +38,10 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from sklearn.preprocessing import MinMaxScaler
+from dataclasses import dataclass, field
+from enum import Enum
+import asyncio
+import aiohttp
 
 # =============================================================================
 # ENHANCED LOGGING SETUP (MUST BE FIRST)
@@ -51,167 +60,1180 @@ logging.basicConfig(
 # Create logger instance
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class TradeSignal:
+    """Trade signal from the AI app"""
+    symbol: str
+    action: str  # 'BUY', 'SELL', 'CLOSE'
+    volume: float
+    price: float
+    sl: float  # Stop Loss
+    tp: float  # Take Profit
+    confidence: float
+    timestamp: datetime
+    signal_id: str
+    comment: str = ""
+
+class MT5ConnectionStatus(Enum):
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    ERROR = "error"
+
+class MT5AutoTrader:
+    """Advanced MT5 Auto Trading System"""
+    
+    def __init__(self, 
+                 account: int,
+                 password: str,
+                 server: str,
+                 path: str = None,
+                 enable_auto_trading: bool = False):
+        
+        self.account = account
+        self.password = password
+        self.server = server
+        self.path = path
+        self.enable_auto_trading = enable_auto_trading
+        
+        # Connection status
+        self.connection_status = MT5ConnectionStatus.DISCONNECTED
+        self.last_connection_attempt = None
+        
+        # Trading parameters
+        self.magic_number = 123456  # Unique identifier for our EA
+        self.max_risk_per_trade = 0.02  # 2% max risk per trade
+        self.max_daily_trades = 10
+        self.min_confidence_threshold = 70.0
+        
+        # Performance tracking
+        self.trades_today = 0
+        self.total_trades = 0
+        self.winning_trades = 0
+        self.total_pnl = 0.0
+        self.daily_pnl = 0.0
+        
+        # Active positions
+        self.active_positions: Dict[str, Dict] = {}
+        
+        # Signal queue
+        self.signal_queue: List[TradeSignal] = []
+        
+        # Logging
+        self.logger = logging.getLogger('MT5AutoTrader')
+        
+        # Threading
+        self.trading_thread = None
+        self.is_running = False
+        
+    def initialize_connection(self) -> bool:
+        """Initialize connection to MT5"""
+        try:
+            self.connection_status = MT5ConnectionStatus.CONNECTING
+            self.last_connection_attempt = datetime.now()
+            
+            # Initialize MT5
+            if not mt5.initialize(path=self.path):
+                self.logger.error(f"MT5 initialize() failed, error code: {mt5.last_error()}")
+                self.connection_status = MT5ConnectionStatus.ERROR
+                return False
+            
+            # Login to account
+            if not mt5.login(self.account, password=self.password, server=self.server):
+                self.logger.error(f"Failed to connect to account #{self.account}, error code: {mt5.last_error()}")
+                self.connection_status = MT5ConnectionStatus.ERROR
+                return False
+            
+            self.connection_status = MT5ConnectionStatus.CONNECTED
+            self.logger.info(f"Successfully connected to MT5 account: {self.account}")
+            
+            # Get account info
+            account_info = mt5.account_info()
+            if account_info:
+                self.logger.info(f"Account balance: {account_info.balance}")
+                self.logger.info(f"Account equity: {account_info.equity}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing MT5 connection: {e}")
+            self.connection_status = MT5ConnectionStatus.ERROR
+            return False
+    
+    def start_auto_trading(self):
+        """Start the auto trading system"""
+        if not self.is_running:
+            self.is_running = True
+            self.trading_thread = threading.Thread(target=self._trading_loop, daemon=True)
+            self.trading_thread.start()
+            self.logger.info("Auto trading system started")
+    
+    def stop_auto_trading(self):
+        """Stop the auto trading system"""
+        self.is_running = False
+        if self.trading_thread:
+            self.trading_thread.join(timeout=5)
+        self.logger.info("Auto trading system stopped")
+    
+    def add_signal(self, signal: TradeSignal):
+        """Add a trading signal to the queue"""
+        if self.enable_auto_trading and signal.confidence >= self.min_confidence_threshold:
+            self.signal_queue.append(signal)
+            self.logger.info(f"Added signal: {signal.action} {signal.symbol} @ {signal.price}")
+    
+    def _trading_loop(self):
+        """Main trading loop"""
+        while self.is_running:
+            try:
+                # Check connection
+                if self.connection_status != MT5ConnectionStatus.CONNECTED:
+                    if not self.initialize_connection():
+                        time.sleep(30)  # Wait before retry
+                        continue
+                
+                # Process signals
+                self._process_signals()
+                
+                # Monitor positions
+                self._monitor_positions()
+                
+                # Update performance metrics
+                self._update_performance()
+                
+                # Sleep before next iteration
+                time.sleep(1)
+                
+            except Exception as e:
+                self.logger.error(f"Error in trading loop: {e}")
+                time.sleep(5)
+    
+    def _process_signals(self):
+        """Process trading signals from the queue"""
+        while self.signal_queue and self.trades_today < self.max_daily_trades:
+            signal = self.signal_queue.pop(0)
+            
+            try:
+                if signal.action in ['BUY', 'SELL']:
+                    self._execute_trade(signal)
+                elif signal.action == 'CLOSE':
+                    self._close_position(signal.symbol)
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing signal: {e}")
+    
+    def _execute_trade(self, signal: TradeSignal) -> bool:
+        """Execute a trade based on the signal"""
+        try:
+            # Get symbol info
+            symbol_info = mt5.symbol_info(signal.symbol)
+            if not symbol_info:
+                self.logger.error(f"Symbol {signal.symbol} not found")
+                return False
+            
+            # Check if symbol is available for trading
+            if not symbol_info.visible:
+                mt5.symbol_select(signal.symbol, True)
+            
+            # Calculate position size based on risk management
+            position_size = self._calculate_position_size(signal)
+            
+            # Prepare the trade request
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": signal.symbol,
+                "volume": position_size,
+                "type": mt5.ORDER_TYPE_BUY if signal.action == 'BUY' else mt5.ORDER_TYPE_SELL,
+                "price": signal.price,
+                "sl": signal.sl,
+                "tp": signal.tp,
+                "deviation": 20,
+                "magic": self.magic_number,
+                "comment": f"AI_Signal_{signal.signal_id}",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            
+            # Send the trade request
+            result = mt5.order_send(request)
+            
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                self.logger.info(f"Trade executed: {signal.action} {position_size} {signal.symbol} @ {result.price}")
+                
+                # Track the position
+                self.active_positions[signal.symbol] = {
+                    'ticket': result.order,
+                    'signal': signal,
+                    'open_time': datetime.now(),
+                    'open_price': result.price,
+                    'volume': position_size
+                }
+                
+                self.trades_today += 1
+                self.total_trades += 1
+                return True
+            else:
+                self.logger.error(f"Trade failed: {result.retcode if result else 'No result'}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error executing trade: {e}")
+            return False
+    
+    def _calculate_position_size(self, signal: TradeSignal) -> float:
+        """Calculate position size based on risk management"""
+        try:
+            account_info = mt5.account_info()
+            if not account_info:
+                return 0.01  # Minimum lot size
+            
+            # Get symbol info
+            symbol_info = mt5.symbol_info(signal.symbol)
+            if not symbol_info:
+                return 0.01
+            
+            # Calculate risk amount
+            risk_amount = account_info.equity * self.max_risk_per_trade
+            
+            # Calculate stop loss distance in points
+            if signal.action == 'BUY':
+                sl_distance = abs(signal.price - signal.sl)
+            else:
+                sl_distance = abs(signal.sl - signal.price)
+            
+            if sl_distance == 0:
+                return 0.01
+            
+            # Calculate position size
+            tick_value = symbol_info.trade_tick_value
+            position_size = risk_amount / (sl_distance * tick_value)
+            
+            # Apply minimum and maximum limits
+            min_lot = symbol_info.volume_min
+            max_lot = min(symbol_info.volume_max, account_info.equity / 1000)  # Conservative max
+            
+            position_size = max(min_lot, min(position_size, max_lot))
+            
+            # Round to lot step
+            lot_step = symbol_info.volume_step
+            position_size = round(position_size / lot_step) * lot_step
+            
+            return position_size
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating position size: {e}")
+            return 0.01
+    
+    def _monitor_positions(self):
+        """Monitor active positions"""
+        try:
+            positions = mt5.positions_get()
+            if positions is None:
+                return
+            
+            current_positions = {pos.symbol: pos for pos in positions if pos.magic == self.magic_number}
+            
+            # Update active positions tracking
+            for symbol in list(self.active_positions.keys()):
+                if symbol not in current_positions:
+                    # Position was closed
+                    self._handle_position_closed(symbol)
+            
+        except Exception as e:
+            self.logger.error(f"Error monitoring positions: {e}")
+    
+    def _handle_position_closed(self, symbol: str):
+        """Handle when a position is closed"""
+        if symbol in self.active_positions:
+            position_info = self.active_positions[symbol]
+            
+            # Get deals to calculate P&L
+            deals = mt5.history_deals_get(
+                position_info['open_time'],
+                datetime.now(),
+                group=symbol
+            )
+            
+            if deals:
+                for deal in deals:
+                    if deal.magic == self.magic_number and deal.symbol == symbol:
+                        if deal.profit != 0:  # Closing deal
+                            if deal.profit > 0:
+                                self.winning_trades += 1
+                            
+                            self.total_pnl += deal.profit
+                            self.daily_pnl += deal.profit
+                            
+                            self.logger.info(f"Position closed: {symbol}, P&L: {deal.profit}")
+            
+            # Remove from active positions
+            del self.active_positions[symbol]
+    
+    def _update_performance(self):
+        """Update performance metrics"""
+        try:
+            account_info = mt5.account_info()
+            if account_info:
+                # Reset daily metrics if new day
+                current_date = datetime.now().date()
+                if not hasattr(self, 'last_update_date') or self.last_update_date != current_date:
+                    self.trades_today = 0
+                    self.daily_pnl = 0.0
+                    self.last_update_date = current_date
+                    
+        except Exception as e:
+            self.logger.error(f"Error updating performance: {e}")
+    
+    def get_performance_report(self) -> Dict:
+        """Get comprehensive performance report"""
+        try:
+            account_info = mt5.account_info()
+            
+            win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
+            
+            return {
+                'account_balance': account_info.balance if account_info else 0,
+                'account_equity': account_info.equity if account_info else 0,
+                'total_trades': self.total_trades,
+                'winning_trades': self.winning_trades,
+                'win_rate': win_rate,
+                'total_pnl': self.total_pnl,
+                'daily_pnl': self.daily_pnl,
+                'trades_today': self.trades_today,
+                'active_positions': len(self.active_positions),
+                'connection_status': self.connection_status.value,
+                'last_update': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting performance report: {e}")
+            return {}
+    
+    def close_all_positions(self):
+        """Close all open positions"""
+        try:
+            positions = mt5.positions_get()
+            if positions:
+                for position in positions:
+                    if position.magic == self.magic_number:
+                        self._close_position_by_ticket(position.ticket)
+                        
+        except Exception as e:
+            self.logger.error(f"Error closing all positions: {e}")
+    
+    def _close_position_by_ticket(self, ticket: int):
+        """Close position by ticket number"""
+        try:
+            position = mt5.positions_get(ticket=ticket)
+            if not position:
+                return False
+            
+            position = position[0]
+            
+            if position.type == mt5.POSITION_TYPE_BUY:
+                order_type = mt5.ORDER_TYPE_SELL
+            else:
+                order_type = mt5.ORDER_TYPE_BUY
+            
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": position.symbol,
+                "volume": position.volume,
+                "type": order_type,
+                "position": ticket,
+                "magic": self.magic_number,
+                "comment": "Close by AI system",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            
+            result = mt5.order_send(request)
+            return result and result.retcode == mt5.TRADE_RETCODE_DONE
+            
+        except Exception as e:
+            self.logger.error(f"Error closing position {ticket}: {e}")
+            return False
+
+# Create MT5 performance display in MT5
+class MT5PerformanceDisplay:
+    """Display AI app performance in MT5 as custom indicators"""
+    
+    def __init__(self, mt5_trader: MT5AutoTrader):
+        self.mt5_trader = mt5_trader
+        
+    def create_performance_chart(self, symbol: str = "EURUSD"):
+        """Create performance chart in MT5"""
+        try:
+            # Get historical performance data
+            performance_data = self._get_historical_performance()
+            
+            # Create custom indicator data
+            # This would require MQL5 EA to display
+            indicator_data = {
+                'equity_curve': performance_data['equity_values'],
+                'win_rate': performance_data['win_rates'],
+                'daily_pnl': performance_data['daily_pnls'],
+                'timestamps': performance_data['timestamps']
+            }
+            
+            return indicator_data
+            
+        except Exception as e:
+            print(f"Error creating performance chart: {e}")
+            return None
+    
+    def _get_historical_performance(self) -> Dict:
+        """Get historical performance data"""
+        # This would fetch historical data from your database
+        # For now, return sample data
+        dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
+        
+        return {
+            'timestamps': dates.tolist(),
+            'equity_values': np.random.cumsum(np.random.randn(30) * 100) + 10000,
+            'win_rates': np.random.uniform(45, 75, 30),
+            'daily_pnls': np.random.randn(30) * 200
+        }
+
+
+@dataclass
+class FTMOPosition:
+    """Enhanced position with FMP real-time updates"""
+    symbol: str
+    entry_price: float
+    current_price: float
+    quantity: int
+    side: str  # 'long' or 'short'
+    entry_time: datetime
+    unrealized_pnl: float = 0.0
+    realized_pnl: float = 0.0
+    commission: float = 0.0
+    swap: float = 0.0
+    position_id: str = field(default_factory=lambda: f"pos_{datetime.now().timestamp()}")
+
+    def update_price_and_pnl(self, current_price: float):
+        """Update price and recalculate P&L"""
+        self.current_price = current_price
+        
+        if self.side == 'long':
+            price_diff = current_price - self.entry_price
+        else:  # short
+            price_diff = self.entry_price - current_price
+        
+        self.unrealized_pnl = (price_diff * self.quantity) - self.commission - self.swap
+
+    def get_position_value(self) -> float:
+        """Get current position value"""
+        return self.quantity * self.current_price
+
+    def get_pnl_percentage(self) -> float:
+        """Get P&L as percentage of position value"""
+        position_value = self.quantity * self.entry_price
+        if position_value > 0:
+            return (self.unrealized_pnl / position_value) * 100
+        return 0.0
+
+
+class FTMOTracker:
+    """FTMO tracker integrated with existing FMP provider"""
+
+    def __init__(self, initial_balance: float, daily_loss_limit: float, 
+                    total_loss_limit: float, profit_target: float = None):
+        self.initial_balance = initial_balance
+        self.current_balance = initial_balance
+        self.daily_loss_limit = daily_loss_limit
+        self.total_loss_limit = total_loss_limit
+        self.profit_target = profit_target
+        
+        # Position tracking
+        self.positions: Dict[str, FTMOPosition] = {}
+        self.closed_positions: List[FTMOPosition] = []
+        
+        # Daily tracking
+        self.daily_start_balance = initial_balance
+        self.daily_start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Performance tracking
+        self.equity_curve: List[Tuple[datetime, float]] = [(datetime.now(), initial_balance)]
+        self.max_daily_drawdown = 0.0
+        self.max_total_drawdown = 0.0
+        self.peak_equity = initial_balance
+        
+        # Risk metrics
+        self.largest_loss = 0.0
+        self.largest_win = 0.0
+        self.consecutive_losses = 0
+        self.consecutive_wins = 0
+        
+        self.last_update = datetime.now()
+
+    def add_position(self, symbol: str, entry_price: float, quantity: int, 
+                    side: str, commission: float = 0.0) -> FTMOPosition:
+        """Add new position with immediate price update"""
+        # Use existing data manager for price
+        current_price = entry_price
+        if hasattr(st.session_state, 'data_manager'):
+            try:
+                current_price = st.session_state.data_manager.get_real_time_price(symbol) or entry_price
+            except:
+                current_price = entry_price
+        
+        position = FTMOPosition(
+            symbol=symbol,
+            entry_price=entry_price,
+            current_price=current_price,
+            quantity=quantity,
+            side=side,
+            entry_time=datetime.now(),
+            commission=commission
+        )
+        
+        position.update_price_and_pnl(current_price)
+        self.positions[position.position_id] = position
+        
+        logger.info(f"Added {side} position: {quantity} {symbol} @ {entry_price}")
+        return position
+
+    def update_all_positions(self) -> Dict[str, float]:
+        """Update all positions with latest prices"""
+        if not self.positions:
+            return {}
+        
+        current_prices = {}
+        
+        # Update each position using existing data manager
+        for position in self.positions.values():
+            try:
+                if hasattr(st.session_state, 'data_manager'):
+                    price = st.session_state.data_manager.get_real_time_price(position.symbol)
+                    if price:
+                        current_prices[position.symbol] = price
+                        position.update_price_and_pnl(price)
+                    else:
+                        # Use cached price with small variation
+                        cached_price = st.session_state.real_time_prices.get(position.symbol, position.current_price)
+                        variation = np.random.uniform(-0.001, 0.001)
+                        new_price = cached_price * (1 + variation)
+                        current_prices[position.symbol] = new_price
+                        position.update_price_and_pnl(new_price)
+            except Exception as e:
+                logger.warning(f"Could not update price for {position.symbol}: {e}")
+        
+        # Update equity curve
+        current_equity = self.calculate_current_equity()
+        self.equity_curve.append((datetime.now(), current_equity))
+        
+        # Keep only last 500 points
+        if len(self.equity_curve) > 500:
+            self.equity_curve = self.equity_curve[-500:]
+        
+        # Update peak tracking
+        if current_equity > self.peak_equity:
+            self.peak_equity = current_equity
+        
+        self.last_update = datetime.now()
+        return current_prices
+
+    def close_position(self, position_id: str, exit_price: float = None) -> float:
+        """Close position with current market price"""
+        if position_id not in self.positions:
+            return 0.0
+        
+        position = self.positions[position_id]
+        
+        # Use current market price if not specified
+        if exit_price is None:
+            exit_price = position.current_price
+        
+        # Calculate final realized P&L
+        if position.side == 'long':
+            price_diff = exit_price - position.entry_price
+        else:
+            price_diff = position.entry_price - exit_price
+        
+        position.realized_pnl = (price_diff * position.quantity) - position.commission - position.swap
+        
+        # Update account balance
+        self.current_balance += position.realized_pnl
+        
+        # Track performance metrics
+        if position.realized_pnl > 0:
+            if position.realized_pnl > self.largest_win:
+                self.largest_win = position.realized_pnl
+            self.consecutive_wins += 1
+            self.consecutive_losses = 0
+        else:
+            if position.realized_pnl < self.largest_loss:
+                self.largest_loss = position.realized_pnl
+            self.consecutive_losses += 1
+            self.consecutive_wins = 0
+        
+        # Move to closed positions
+        self.closed_positions.append(position)
+        del self.positions[position_id]
+        
+        logger.info(f"Closed position: {position.symbol} P&L: ${position.realized_pnl:.2f}")
+        return position.realized_pnl
+
+    def calculate_current_equity(self) -> float:
+        """Calculate current account equity"""
+        unrealized_total = sum(pos.unrealized_pnl for pos in self.positions.values())
+        return self.current_balance + unrealized_total
+
+    def reset_daily_metrics_if_needed(self):
+        """Reset daily metrics if new day"""
+        now = datetime.now()
+        if now.date() != self.daily_start_time.date():
+            self.daily_start_balance = self.current_balance
+            self.daily_start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            logger.info("Daily metrics reset for new trading day")
+
+    def get_ftmo_summary(self) -> Dict:
+        """Get FTMO-style account summary"""
+        self.reset_daily_metrics_if_needed()
+        
+        current_equity = self.calculate_current_equity()
+        daily_pnl = current_equity - self.daily_start_balance
+        total_pnl = current_equity - self.initial_balance
+        
+        # Calculate percentages
+        daily_pnl_pct = (daily_pnl / self.daily_start_balance) * 100 if self.daily_start_balance > 0 else 0
+        total_pnl_pct = (total_pnl / self.initial_balance) * 100
+        
+        # Drawdown calculations
+        current_drawdown = (self.peak_equity - current_equity) / self.peak_equity * 100 if self.peak_equity > 0 else 0
+        self.max_total_drawdown = max(self.max_total_drawdown, current_drawdown)
+        
+        # Risk limit utilization
+        daily_limit_used = abs(daily_pnl_pct / self.daily_loss_limit) * 100 if self.daily_loss_limit != 0 and daily_pnl < 0 else 0
+        total_limit_used = abs(total_pnl_pct / self.total_loss_limit) * 100 if self.total_loss_limit != 0 and total_pnl < 0 else 0
+        
+        # Position details
+        position_details = []
+        for position in self.positions.values():
+            position_details.append({
+                'symbol': position.symbol,
+                'side': position.side,
+                'quantity': position.quantity,
+                'entry_price': position.entry_price,
+                'current_price': position.current_price,
+                'unrealized_pnl': position.unrealized_pnl,
+                'pnl_pct': position.get_pnl_percentage(),
+                'value': position.get_position_value(),
+                'position_id': position.position_id
+            })
+        
+        return {
+            'current_equity': current_equity,
+            'initial_balance': self.initial_balance,
+            'daily_pnl': daily_pnl,
+            'daily_pnl_pct': daily_pnl_pct,
+            'total_pnl': total_pnl,
+            'total_pnl_pct': total_pnl_pct,
+            'unrealized_pnl': sum(pos.unrealized_pnl for pos in self.positions.values()),
+            'daily_limit_used_pct': daily_limit_used,
+            'total_limit_used_pct': total_limit_used,
+            'current_drawdown': current_drawdown,
+            'max_total_drawdown': self.max_total_drawdown,
+            'open_positions': len(self.positions),
+            'position_details': position_details,
+            'last_update': self.last_update.strftime('%H:%M:%S'),
+            # Performance metrics
+            'largest_win': self.largest_win,
+            'largest_loss': self.largest_loss,
+            'consecutive_wins': self.consecutive_wins,
+            'consecutive_losses': self.consecutive_losses
+        }
+
+
+class PremiumKeyManager:
+    """Manages premium keys with click limits and expiration"""
+    
+    # Master key (your personal key) - unlimited access
+    MASTER_KEY = "Prem246_357"
+    
+    # Customer premium keys with 20 clicks each - UPDATED EXPIRATION DATES
+    CUSTOMER_KEYS = {
+        "PremPro_8K9L2M": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Customer Key - 20 Predictions"
+        },
+        "PremElite_7N4P5Q": {
+            "type": "customer", 
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Elite Key - 20 Predictions"
+        },
+        "PremMax_6R8S9T": {
+            "type": "customer",
+            "clicks_total": 20, 
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Max Key - 20 Predictions"
+        },
+        "PremUltra_5U2V7W": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20, 
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Ultra Key - 20 Predictions"
+        },
+        "PremAdvanced_4X1Y3Z": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Advanced Key - 20 Predictions"
+        },
+        "PremSuper_3A6B9C": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium", 
+            "description": "Premium Super Key - 20 Predictions"
+        },
+        "PremTurbo_2D5E8F": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Turbo Key - 20 Predictions"
+        },
+        "PremPower_1G4H7I": {
+            "type": "customer", 
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Power Key - 20 Predictions"
+        },
+        "PremPlus_9J2K5L": {
+            "type": "customer",
+            "clicks_total": 20,
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Plus Key - 20 Predictions"
+        },
+        "PremBoost_8M1N4O": {
+            "type": "customer",
+            "clicks_total": 20, 
+            "clicks_remaining": 20,
+            "expires": "2025-12-31",  # Updated to 2025
+            "features": "all_premium",
+            "description": "Premium Boost Key - 20 Predictions"
+        }
+    }
+    
+    # File to store key usage data
+    USAGE_FILE = Path("premium_key_usage.json")
+    
+    @classmethod
+    def _load_usage_data(cls) -> Dict:
+        """Load key usage data from file"""
+        try:
+            if cls.USAGE_FILE.exists():
+                with open(cls.USAGE_FILE, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load usage data: {e}")
+        return {}
+    
+    @classmethod
+    def _save_usage_data(cls, data: Dict):
+        """Save key usage data to file"""
+        try:
+            with open(cls.USAGE_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save usage data: {e}")
+    
+    @classmethod
+    def _is_key_expired(cls, expiry_date: str) -> bool:
+        """Check if key has expired"""
+        try:
+            expiry = datetime.strptime(expiry_date, "%Y-%m-%d")
+            return datetime.now() > expiry
+        except:
+            return True
+    
+    @classmethod
+    def reset_customer_key_usage(cls, key: str) -> bool:
+        """Reset usage for a specific customer key (admin function)"""
+        if key not in cls.CUSTOMER_KEYS:
+            return False
+        
+        try:
+            usage_data = cls._load_usage_data()
+            
+            # Reset the key usage
+            if key in usage_data:
+                usage_data[key] = {
+                    'clicks_remaining': cls.CUSTOMER_KEYS[key]['clicks_total'],
+                    'last_used': 'Never',
+                    'usage_history': [],
+                    'reset_timestamp': datetime.now().isoformat(),
+                    'reset_by': 'admin'
+                }
+            else:
+                # Initialize fresh usage data
+                usage_data[key] = {
+                    'clicks_remaining': cls.CUSTOMER_KEYS[key]['clicks_total'],
+                    'last_used': 'Never', 
+                    'usage_history': [],
+                    'initialized_timestamp': datetime.now().isoformat()
+                }
+            
+            cls._save_usage_data(usage_data)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error resetting key {key}: {e}")
+            return False
+    
+    @classmethod
+    def reset_all_customer_keys(cls) -> Dict[str, bool]:
+        """Reset usage for all customer keys (admin function)"""
+        results = {}
+        
+        for key in cls.CUSTOMER_KEYS.keys():
+            results[key] = cls.reset_customer_key_usage(key)
+        
+        return results
+    
+    @classmethod
+    def extend_key_expiration(cls, key: str, new_expiry_date: str) -> bool:
+        """Extend expiration date for a specific key (admin function)"""
+        if key not in cls.CUSTOMER_KEYS:
+            return False
+        
+        try:
+            # Validate date format
+            datetime.strptime(new_expiry_date, "%Y-%m-%d")
+            
+            # Update the expiry date in the class definition
+            # Note: This only updates the runtime instance, not the source code
+            cls.CUSTOMER_KEYS[key]['expires'] = new_expiry_date
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error extending key {key} expiration: {e}")
+            return False
+    
+    @classmethod
+    def validate_key(cls, key: str) -> Dict[str, Any]:
+        """Validate premium key and return status"""
+        
+        # Check master key
+        if key == cls.MASTER_KEY:
+            return {
+                'valid': True,
+                'tier': 'premium',
+                'key_type': 'master',
+                'clicks_remaining': 'unlimited',
+                'expires': 'never',
+                'description': 'Master Premium Access - Unlimited',
+                'features': [
+                    '6 Advanced AI Models',
+                    'Real-time Cross-validation', 
+                    'SHAP Model Explanations',
+                    'Advanced Risk Analytics',
+                    'Market Regime Detection',
+                    'Model Drift Detection', 
+                    'Portfolio Optimization',
+                    'Real-time Alternative Data',
+                    'Multi-timeframe Analysis',
+                    'High-frequency Features',
+                    'Economic Indicators',
+                    'Sentiment Analysis',
+                    'Options Flow Data',
+                    'Meta-learning Ensemble',
+                    'Unlimited Predictions'
+                ],
+                'message': 'Master Premium Access Activated!'
+            }
+        
+        # Check customer keys
+        if key in cls.CUSTOMER_KEYS:
+            key_info = cls.CUSTOMER_KEYS[key].copy()
+            
+            # Check expiration
+            if cls._is_key_expired(key_info['expires']):
+                return {
+                    'valid': False,
+                    'tier': 'free',
+                    'message': 'Premium key has expired'
+                }
+            
+            # Load current usage
+            usage_data = cls._load_usage_data()
+            if key in usage_data:
+                key_info['clicks_remaining'] = usage_data[key].get('clicks_remaining', 0)
+            
+            # Check clicks remaining
+            if key_info['clicks_remaining'] <= 0:
+                return {
+                    'valid': False,
+                    'tier': 'free', 
+                    'message': 'Premium key has no remaining predictions'
+                }
+            
+            return {
+                'valid': True,
+                'tier': 'premium',
+                'key_type': 'customer',
+                'clicks_remaining': key_info['clicks_remaining'],
+                'clicks_total': key_info['clicks_total'],
+                'expires': key_info['expires'],
+                'description': key_info['description'],
+                'features': [
+                    '6 Advanced AI Models',
+                    'Real-time Cross-validation',
+                    'SHAP Model Explanations', 
+                    'Advanced Risk Analytics',
+                    'Market Regime Detection',
+                    'Model Drift Detection',
+                    'Portfolio Optimization',
+                    'Real-time Alternative Data',
+                    'Multi-timeframe Analysis',
+                    'High-frequency Features',
+                    'Economic Indicators',
+                    'Sentiment Analysis',
+                    'Options Flow Data',
+                    'Meta-learning Ensemble',
+                    f'{key_info["clicks_remaining"]} Predictions Remaining'
+                ],
+                'message': f'Premium Access Active - {key_info["clicks_remaining"]} predictions remaining'
+            }
+        
+        return {
+            'valid': False,
+            'tier': 'free',
+            'message': 'Invalid premium key'
+        }
+    
+    @classmethod
+    def record_click(cls, key: str, prediction_data: dict = None) -> Tuple[bool, Dict]:
+        """Record a prediction click for customer keys"""
+        
+        # Master key has unlimited clicks
+        if key == cls.MASTER_KEY:
+            return True, {
+                'success': True,
+                'clicks_remaining': 'unlimited',
+                'message': 'Master key - unlimited predictions'
+            }
+        
+        # Handle customer keys
+        if key in cls.CUSTOMER_KEYS:
+            usage_data = cls._load_usage_data()
+            
+            # Initialize if not exists
+            if key not in usage_data:
+                usage_data[key] = {
+                    'clicks_remaining': cls.CUSTOMER_KEYS[key]['clicks_total'],
+                    'last_used': datetime.now().isoformat(),
+                    'usage_history': []
+                }
+            
+            # Check remaining clicks
+            if usage_data[key]['clicks_remaining'] <= 0:
+                return False, {
+                    'success': False,
+                    'clicks_remaining': 0,
+                    'message': 'No predictions remaining'
+                }
+            
+            # Decrease click count
+            usage_data[key]['clicks_remaining'] -= 1
+            usage_data[key]['last_used'] = datetime.now().isoformat()
+            
+            # Add to usage history
+            usage_data[key]['usage_history'].append({
+                'timestamp': datetime.now().isoformat(),
+                'prediction_data': prediction_data
+            })
+            
+            # Save usage data
+            cls._save_usage_data(usage_data)
+            
+            return True, {
+                'success': True,
+                'clicks_remaining': usage_data[key]['clicks_remaining'],
+                'message': f'{usage_data[key]["clicks_remaining"]} predictions remaining'
+            }
+        
+        return False, {
+            'success': False, 
+            'message': 'Invalid key'
+        }
+    
+    @classmethod
+    def get_key_status(cls, key: str) -> Dict:
+        """Get detailed key status"""
+        validation = cls.validate_key(key)
+        
+        if validation['valid']:
+            return {
+                'exists': True,
+                'active': True,
+                'tier': validation['tier'],
+                'key_type': validation.get('key_type', 'unknown'),
+                'clicks_remaining': validation.get('clicks_remaining', 0),
+                'expires': validation.get('expires', 'unknown')
+            }
+        
+        return {
+            'exists': False,
+            'active': False,
+            'tier': 'free'
+        }
+    
+    @classmethod
+    def get_all_customer_keys_status(cls) -> Dict:
+        """Get status of all customer keys (for admin purposes)"""
+        usage_data = cls._load_usage_data()
+        status_report = {}
+        
+        for key, info in cls.CUSTOMER_KEYS.items():
+            current_usage = usage_data.get(key, {})
+            clicks_remaining = current_usage.get('clicks_remaining', info['clicks_total'])
+            last_used = current_usage.get('last_used', 'Never')
+            
+            status_report[key] = {
+                'description': info['description'],
+                'clicks_total': info['clicks_total'],
+                'clicks_remaining': clicks_remaining,
+                'clicks_used': info['clicks_total'] - clicks_remaining,
+                'expires': info['expires'],
+                'expired': cls._is_key_expired(info['expires']),
+                'last_used': last_used,
+                'usage_count': len(current_usage.get('usage_history', []))
+            }
+        
+        return status_report
+    
+    
 # =============================================================================
-# CORE IMPORTS (After logging setup)
+# FALLBACK IMPORTS AND CLASSES (Before any other imports)
 # =============================================================================
 
-from keep_alive import AppKeepAlive
+class AppKeepAlive:
+    """Fallback AppKeepAlive class if module is missing"""
+    def __init__(self):
+        self.active = False
+    
+    def start(self):
+        self.active = True
+        logger.info("✅ KeepAlive service started (fallback mode)")
+    
+    def stop(self):
+        self.active = False
 
-from session_state_manager import initialize_session_state, reset_session_state, update_session_state
+def initialize_session_state():
+    """Fallback session state initialization"""
+    if 'initialized' not in st.session_state:
+        st.session_state.initialized = True
+        st.session_state.subscription_tier = 'free'
+        st.session_state.premium_key = ''
+        st.session_state.selected_ticker = '^GSPC'
+        st.session_state.selected_timeframe = '1day'
+        st.session_state.current_prediction = None
+        st.session_state.session_stats = {
+            'predictions': 0,
+            'models_trained': 0,
+            'backtests': 0,
+            'cv_runs': 0
+        }
+        st.session_state.models_trained = {}
+        st.session_state.model_configs = {}
+        st.session_state.real_time_prices = {}
+        st.session_state.last_update = None
+        logger.info("✅ Session state initialized (fallback mode)")
 
-# Import mobile optimization modules
-from mobile_optimizations import (
-    apply_mobile_optimizations, 
-    is_mobile_device, 
-    get_device_type
-)
-from mobile_config import create_mobile_config_manager
-from mobile_performance import create_mobile_performance_optimizer
+def reset_session_state():
+    """Fallback session state reset"""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    initialize_session_state()
+
+def update_session_state(updates: Dict):
+    """Fallback session state update"""
+    for key, value in updates.items():
+        st.session_state[key] = value
+
+def apply_mobile_optimizations():
+    """Fallback mobile optimization"""
+    st.markdown("""
+    <style>
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding: 1rem;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def is_mobile_device():
+    """Fallback mobile detection"""
+    return False
+
+def get_device_type():
+    """Fallback device type detection"""
+    return "desktop"
+
+def create_mobile_config_manager(is_mobile):
+    """Fallback mobile config manager"""
+    return {"is_mobile": is_mobile}
+
+def create_mobile_performance_optimizer(is_mobile):
+    """Fallback mobile performance optimizer"""
+    return {"optimized": is_mobile}
 
 # =============================================================================
-# USER MANAGEMENT IMPORTS - ENHANCED INTEGRATION
+# CORE IMPORTS (With fallback handling)
 # =============================================================================
 
 try:
-    from user_management import (
-        # Core Classes
-        EnhancedUserManager,
-        
-        # Main Interface Functions
-        create_user_management_section,
-        create_advanced_prediction_interface,
-        create_comprehensive_user_management,
-        create_prediction_interface_with_click_tracking,
-        
-        # Middleware Functions
-        enhanced_user_prediction_middleware,
-        user_prediction_middleware,
-        enhanced_user_access_middleware,
-        user_access_middleware,
-        admin_user_access_middleware,
-        management_key_middleware,
-        
-        # Action Functions
-        record_user_prediction_click,
-        get_user_status,
-        safe_get_user_status,
-        
-        # Utility Functions
-        quick_setup_demo_environment,
-        display_quick_user_ids,
-        generate_user_credentials_email,
-        log_user_action,
-        monitor_system_performance
+    from keep_alive import AppKeepAlive
+except ImportError:
+    logger.warning("⚠️ keep_alive module not found, using fallback")
+
+try:
+    from session_state_manager import initialize_session_state, reset_session_state, update_session_state
+except ImportError:
+    logger.warning("⚠️ session_state_manager module not found, using fallback")
+
+try:
+    from mobile_optimizations import (
+        apply_mobile_optimizations, 
+        is_mobile_device, 
+        get_device_type
     )
-    
-    USER_MANAGEMENT_AVAILABLE = True
-    logger.info("✅ Enhanced user management module imported successfully")
-    
-except ImportError as e:
-    USER_MANAGEMENT_AVAILABLE = False
-    logger.error(f"⚠️ User management import failed: {e}")
-    logger.info("💡 Creating fallback user management functions...")
-    
-    # Fallback functions when user_management.py is not available
-    def user_access_middleware(user_id: str) -> bool:
-        """Fallback middleware - always returns True"""
-        return True
-    
-    def enhanced_user_prediction_middleware(user_id: str) -> bool:
-        """Fallback middleware - always returns True"""
-        return True
-    
-    def record_user_prediction_click(user_id: str, prediction_data: dict = None):
-        """Fallback click recording"""
-        return True, {'success': True, 'fallback': True}
-    
-    def get_user_status(user_id: str):
-        """Fallback user status"""
-        return {'exists': True, 'fallback': True, 'can_predict': True}
-    
-    def safe_get_user_status(user_id: str):
-        """Safe fallback user status"""
-        return get_user_status(user_id)
-    
-    def create_user_management_section():
-        """Fallback user management section"""
-        st.error("❌ User Management module not found")
-        st.info("💡 To enable User Management:")
-        st.code("""
-1. Ensure user_management.py is in the same directory as fixedui.py
-2. Check that all required dependencies are installed
-3. Restart your Streamlit app
-        """)
-        
-        # Show manual user ID input as fallback
-        st.markdown("### 🔧 Manual User Access (Fallback Mode)")
-        manual_user_id = st.text_input(
-            "Enter any User ID for testing",
-            placeholder="test_user_001",
-            help="In fallback mode, any User ID will work"
-        )
-        
-        if manual_user_id:
-            st.session_state.current_user_id = manual_user_id
-            st.success(f"✅ Fallback user access granted for: {manual_user_id}")
-    
-    class EnhancedUserManager:
-        """Fallback user manager"""
-        def __init__(self):
-            self.users = {}
+except ImportError:
+    logger.warning("⚠️ mobile_optimizations module not found, using fallback")
 
-except Exception as e:
-    USER_MANAGEMENT_AVAILABLE = False
-    logger.error(f"❌ Unexpected error importing user management: {e}")
-    
-    # Same fallback functions as above
-    def user_access_middleware(user_id: str) -> bool:
-        return True
-    
-    def enhanced_user_prediction_middleware(user_id: str) -> bool:
-        return True
-    
-    def record_user_prediction_click(user_id: str, prediction_data: dict = None):
-        return True, {'success': True, 'fallback': True}
-    
-    def get_user_status(user_id: str):
-        return {'exists': True, 'fallback': True, 'can_predict': True}
-    
-    def safe_get_user_status(user_id: str):
-        return get_user_status(user_id)
-    
-    def create_user_management_section():
-        st.error("❌ User Management system error")
-        st.info("Using fallback mode for user access")
-    
-    class EnhancedUserManager:
-        def __init__(self):
-            self.users = {}
+try:
+    from mobile_config import create_mobile_config_manager
+except ImportError:
+    logger.warning("⚠️ mobile_config module not found, using fallback")
 
-# =============================================================================
-# INITIALIZE USER MANAGEMENT (After import success)
-# =============================================================================
-
-def initialize_user_management():
-    """Initialize user management system safely"""
-    if USER_MANAGEMENT_AVAILABLE:
-        # Initialize user manager in session state if not exists
-        if 'enhanced_user_manager' not in st.session_state:
-            st.session_state.enhanced_user_manager = EnhancedUserManager()
-            logger.info("✅ Enhanced user manager initialized")
-        
-        # Auto-setup demo environment if no users exist
-        try:
-            if len(st.session_state.enhanced_user_manager.users) == 0:
-                quick_setup_demo_environment()
-                logger.info("✅ Demo environment auto-setup completed")
-        except Exception as e:
-            logger.warning(f"⚠️ Demo setup failed: {e}")
-    else:
-        logger.info("📊 Running in fallback mode without user management")
-
-# Call initialization function
-initialize_user_management()
+try:
+    from mobile_performance import create_mobile_performance_optimizer
+except ImportError:
+    logger.warning("⚠️ mobile_performance module not found, using fallback")
 
 
 class EnhancedAnalyticsSuite:
@@ -896,6 +1918,292 @@ def create_enhanced_dashboard_styling():
     }
     </style>
     """, unsafe_allow_html=True)
+    
+def create_admin_panel():
+    """Enhanced admin panel for master key users with key management"""
+    st.header("🔧 Admin Panel")
+    
+    # Only show for master key
+    if st.session_state.premium_key != PremiumKeyManager.MASTER_KEY:
+        st.warning("⚠️ Admin panel only available for master key users")
+        return
+    
+    # Admin tabs
+    admin_tabs = st.tabs([
+        "📊 Key Statistics", 
+        "🔧 Key Management", 
+        "📈 Usage Analytics",
+        "⚙️ System Tools"
+    ])
+    
+    # Tab 1: Key Statistics
+    with admin_tabs[0]:
+        st.markdown("#### 📊 Customer Key Statistics")
+        
+        # Get all key statuses
+        key_statuses = PremiumKeyManager.get_all_customer_keys_status()
+        
+        # Summary metrics
+        total_keys = len(key_statuses)
+        active_keys = sum(1 for status in key_statuses.values() if not status['expired'] and status['clicks_remaining'] > 0)
+        exhausted_keys = sum(1 for status in key_statuses.values() if status['clicks_remaining'] == 0)
+        expired_keys = sum(1 for status in key_statuses.values() if status['expired'])
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Keys", total_keys)
+        with col2:
+            st.metric("Active Keys", active_keys)
+        with col3:
+            st.metric("Exhausted Keys", exhausted_keys) 
+        with col4:
+            st.metric("Expired Keys", expired_keys)
+        
+        # Detailed table
+        st.markdown("#### 📋 Detailed Key Status")
+        
+        table_data = []
+        for key, status in key_statuses.items():
+            table_data.append({
+                'Key': key,
+                'Description': status['description'],
+                'Used': f"{status['clicks_used']}/{status['clicks_total']}",
+                'Remaining': status['clicks_remaining'],
+                'Expires': status['expires'],
+                'Status': 'Expired' if status['expired'] else 'Exhausted' if status['clicks_remaining'] == 0 else 'Active',
+                'Last Used': status['last_used']
+            })
+        
+        df = pd.DataFrame(table_data)
+        st.dataframe(df, use_container_width=True)
+        
+        # Usage chart
+        st.markdown("#### 📈 Usage Overview")
+        
+        usage_data = [status['clicks_used'] for status in key_statuses.values()]
+        key_names = [key.split('_')[0] for key in key_statuses.keys()]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=key_names,
+            y=usage_data,
+            marker_color='lightblue',
+            text=usage_data,
+            textposition='auto'
+        ))
+        
+        fig.update_layout(
+            title="Predictions Used by Customer Key",
+            xaxis_title="Customer Keys",
+            yaxis_title="Predictions Used",
+            template="plotly_white"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Tab 2: Key Management
+    with admin_tabs[1]:
+        st.markdown("#### 🔧 Key Management Tools")
+        
+        # Reset individual key
+        st.markdown("##### Reset Individual Key")
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            selected_key = st.selectbox(
+                "Select Key to Reset",
+                options=list(PremiumKeyManager.CUSTOMER_KEYS.keys()),
+                help="Choose a customer key to reset its usage"
+            )
+        
+        with col2:
+            if st.button("🔄 Reset Selected Key", type="secondary"):
+                success = PremiumKeyManager.reset_customer_key_usage(selected_key)
+                if success:
+                    st.success(f"✅ Successfully reset {selected_key}")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to reset {selected_key}")
+        
+        # Reset all keys
+        st.markdown("##### Reset All Keys")
+        st.warning("⚠️ This will reset usage for ALL customer keys!")
+        
+        if st.button("🔄 Reset ALL Customer Keys", type="primary"):
+            results = PremiumKeyManager.reset_all_customer_keys()
+            successful_resets = sum(1 for success in results.values() if success)
+            
+            if successful_resets == len(results):
+                st.success(f"✅ Successfully reset all {successful_resets} customer keys")
+                st.rerun()
+            else:
+                st.warning(f"⚠️ Reset {successful_resets}/{len(results)} keys successfully")
+        
+        # Extend key expiration
+        st.markdown("##### Extend Key Expiration")
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            key_to_extend = st.selectbox(
+                "Select Key to Extend",
+                options=list(PremiumKeyManager.CUSTOMER_KEYS.keys()),
+                help="Choose a key to extend its expiration date",
+                key="extend_key_select"
+            )
+        
+        with col2:
+            new_expiry = st.date_input(
+                "New Expiry Date",
+                value=datetime(2026, 12, 31).date(),
+                help="Select new expiration date"
+            )
+        
+        with col3:
+            if st.button("📅 Extend Expiry", type="secondary"):
+                success = PremiumKeyManager.extend_key_expiration(
+                    key_to_extend, 
+                    new_expiry.strftime("%Y-%m-%d")
+                )
+                if success:
+                    st.success(f"✅ Extended {key_to_extend} to {new_expiry}")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to extend {key_to_extend}")
+    
+    # Tab 3: Usage Analytics
+    with admin_tabs[2]:
+        st.markdown("#### 📈 Usage Analytics")
+        
+        # Usage trends over time
+        st.markdown("##### Usage Trends")
+        
+        # Load usage data for analytics
+        usage_data = PremiumKeyManager._load_usage_data()
+        
+        if usage_data:
+            # Create usage timeline
+            timeline_data = []
+            for key, data in usage_data.items():
+                usage_history = data.get('usage_history', [])
+                for usage in usage_history:
+                    timeline_data.append({
+                        'Key': key.split('_')[0],
+                        'Timestamp': usage.get('timestamp', ''),
+                        'Date': usage.get('timestamp', '')[:10] if usage.get('timestamp') else ''
+                    })
+            
+            if timeline_data:
+                df_timeline = pd.DataFrame(timeline_data)
+                df_timeline['Date'] = pd.to_datetime(df_timeline['Date'])
+                
+                # Group by date and count usage
+                daily_usage = df_timeline.groupby('Date').size().reset_index(name='Predictions')
+                
+                fig_timeline = go.Figure()
+                fig_timeline.add_trace(go.Scatter(
+                    x=daily_usage['Date'],
+                    y=daily_usage['Predictions'],
+                    mode='lines+markers',
+                    name='Daily Predictions',
+                    line=dict(color='blue', width=2)
+                ))
+                
+                fig_timeline.update_layout(
+                    title="Daily Prediction Usage",
+                    xaxis_title="Date",
+                    yaxis_title="Number of Predictions",
+                    template="plotly_white"
+                )
+                
+                st.plotly_chart(fig_timeline, use_container_width=True)
+            else:
+                st.info("No usage history available yet")
+        else:
+            st.info("No usage data available")
+        
+        # Key performance metrics
+        st.markdown("##### Key Performance Metrics")
+        
+        total_predictions = sum(
+            len(data.get('usage_history', [])) 
+            for data in usage_data.values()
+        )
+        
+        most_used_key = max(
+            usage_data.items(),
+            key=lambda x: len(x[1].get('usage_history', [])),
+            default=('None', {'usage_history': []})
+        )[0] if usage_data else 'None'
+        
+        avg_usage_per_key = total_predictions / len(usage_data) if usage_data else 0
+        
+        metric_cols = st.columns(3)
+        with metric_cols[0]:
+            st.metric("Total Predictions Made", total_predictions)
+        with metric_cols[1]:
+            st.metric("Most Used Key", most_used_key.split('_')[0] if most_used_key != 'None' else 'None')
+        with metric_cols[2]:
+            st.metric("Avg Usage/Key", f"{avg_usage_per_key:.1f}")
+    
+    # Tab 4: System Tools
+    with admin_tabs[3]:
+        st.markdown("#### ⚙️ System Tools")
+        
+        # Download usage data
+        st.markdown("##### Export Data")
+        
+        if st.button("📥 Download Usage Data", type="secondary"):
+            usage_data = PremiumKeyManager._load_usage_data()
+            key_statuses = PremiumKeyManager.get_all_customer_keys_status()
+            
+            export_data = {
+                'export_timestamp': datetime.now().isoformat(),
+                'key_statuses': key_statuses,
+                'raw_usage_data': usage_data,
+                'summary': {
+                    'total_keys': len(key_statuses),
+                    'active_keys': sum(1 for status in key_statuses.values() if not status['expired'] and status['clicks_remaining'] > 0),
+                    'total_predictions_made': sum(len(data.get('usage_history', [])) for data in usage_data.values())
+                }
+            }
+            
+            st.download_button(
+                label="⬇️ Download Export",
+                data=json.dumps(export_data, indent=2),
+                file_name=f"premium_keys_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+        
+        # System status
+        st.markdown("##### System Status")
+        
+        status_cols = st.columns(2)
+        with status_cols[0]:
+            st.metric("Backend Status", "🟢 OPERATIONAL" if BACKEND_AVAILABLE else "🟡 SIMULATION")
+            st.metric("API Status", "🟢 CONNECTED" if FMP_API_KEY else "🟡 SIMULATED")
+        
+        with status_cols[1]:
+            usage_file_exists = PremiumKeyManager.USAGE_FILE.exists()
+            st.metric("Usage File", "🟢 EXISTS" if usage_file_exists else "🔴 MISSING")
+            
+            if usage_file_exists:
+                file_size = PremiumKeyManager.USAGE_FILE.stat().st_size
+                st.metric("File Size", f"{file_size} bytes")
+        
+        # Clear usage data (dangerous operation)
+        st.markdown("##### Dangerous Operations")
+        st.error("⚠️ **DANGER ZONE** - These operations cannot be undone!")
+        
+        if st.checkbox("I understand this will permanently delete all usage data"):
+            if st.button("🗑️ Clear All Usage Data", type="primary"):
+                try:
+                    if PremiumKeyManager.USAGE_FILE.exists():
+                        PremiumKeyManager.USAGE_FILE.unlink()
+                    st.success("✅ All usage data cleared")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error clearing data: {e}")        
+    
 
 def create_bright_enhanced_header():
     """Enhanced header with better contrast and visibility"""
@@ -1073,184 +2381,15 @@ except ImportError as e:
 # =============================================================================
 
 
-# Replace your current ProfessionalSubscriptionManager class with this corrected version:
-
 class ProfessionalSubscriptionManager:
-    """Enhanced subscription management with full feature access"""
-    
-    PREMIUM_KEY = "Prem246_357"
-    
-    TIER_FEATURES = {
-        'free': {
-            'max_tickers': 3,
-            'max_predictions_per_day': 10,
-            'available_models': ['xgboost', 'sklearn_ensemble'],
-            'max_forecast_days': 1,
-            'ensemble_voting': False,
-            'cross_validation': False,
-            'model_explanations': False,
-            'risk_analytics': False,
-            'backtesting': False,
-            'regime_detection': False,
-            'drift_detection': False,
-            'portfolio_optimization': False,
-            'real_time_data': False,
-            'alternative_data': False,
-            'multi_timeframe': False,
-            'hf_features': False,
-            'economic_data': False,
-            'sentiment_analysis': False,
-            'options_flow': False,
-            'meta_learning': False
-        },
-        'premium': {
-            'max_tickers': float('inf'),
-            'max_predictions_per_day': float('inf'),
-            'available_models': 'all',
-            'max_forecast_days': 30,
-            'ensemble_voting': True,
-            'cross_validation': True,
-            'model_explanations': True,
-            'risk_analytics': True,
-            'backtesting': True,
-            'regime_detection': True,
-            'drift_detection': True,
-            'portfolio_optimization': True,
-            'real_time_data': True,
-            'alternative_data': True,
-            'multi_timeframe': True,
-            'hf_features': True,
-            'economic_data': True,
-            'sentiment_analysis': True,
-            'options_flow': True,
-            'meta_learning': True
-        }
-    }
+    """Simplified subscription management using PremiumKeyManager"""
     
     @staticmethod
     def validate_premium_key(key: str) -> Dict[str, Any]:
-        """Validate premium key using external validation module"""
-        # First, try external validation
-        external_validation = validate_premium_key_ext(key)
-
-        # If external validation is valid, return its result
-        if external_validation['valid']:
-            return external_validation
-
-        # Keep the original key validation as a fallback
-        if key == ProfessionalSubscriptionManager.PREMIUM_KEY:
-            return {
-                'valid': True,
-                'tier': 'premium',
-                'expires': 'Never',
-                'description': 'Professional AI Trading System - Full Backend Integration',
-                'features': [
-                    '8 Advanced AI Models',
-                    'Real-time Cross-validation',
-                    'SHAP Model Explanations',
-                    'Advanced Risk Analytics',
-                    'Market Regime Detection',
-                    'Model Drift Detection',
-                    'Portfolio Optimization',
-                    'Real-time Alternative Data',
-                    'Multi-timeframe Analysis',
-                    'High-frequency Features',
-                    'Economic Indicators',
-                    'Sentiment Analysis',
-                    'Options Flow Data',
-                    'Meta-learning Ensemble'
-                ],
-                'message': 'Welcome to the fully integrated Professional AI Trading System!'
-            }
-
-        # If no validation passes, return invalid key
-        return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
-
-
-# ADD THIS FUNCTION OUTSIDE THE CLASS (after the class ends):
-def validate_premium_key_ext(key: str) -> Dict[str, Any]:
-    """External premium key validation for user management and additional features"""
-    
-    # Check if it's the special user management key
-    if key == "UserMgmt_2024":
-        return {
-            'valid': True,
-            'tier': 'premium',
-            'allow_model_management': False,  # Users can't manage models
-            'expires': 'Never',
-            'description': 'User Management Access - Premium Features',
-            'features': [
-                'User Access Control',
-                'Usage Tracking',
-                'Monthly Limits',
-                'User Statistics',
-                'Export Capabilities',
-                'Individual User Management',
-                'API Key Generation',
-                'Status Management'
-            ],
-            'message': 'User Management System Activated!'
-        }
-    
-    # Check for other special keys (you can add more here)
-    elif key == "SuperAdmin_2024":
-        return {
-            'valid': True,
-            'tier': 'premium',
-            'allow_model_management': True,  # Full access including model management
-            'expires': 'Never',
-            'description': 'Super Admin Access - All Features',
-            'features': [
-                '8 Advanced AI Models',
-                'Real-time Cross-validation',
-                'SHAP Model Explanations',
-                'Advanced Risk Analytics',
-                'Market Regime Detection',
-                'Model Drift Detection',
-                'Portfolio Optimization',
-                'Real-time Alternative Data',
-                'Multi-timeframe Analysis',
-                'High-frequency Features',
-                'Economic Indicators',
-                'Sentiment Analysis',
-                'Options Flow Data',
-                'Meta-learning Ensemble',
-                'User Management System',
-                'Model Training & Management'
-            ],
-            'message': 'Super Admin Access Granted - All Features Unlocked!'
-        }
-    
-    # Add support for your original key too
-    elif key == "Prem246_357":
-        return {
-            'valid': True,
-            'tier': 'premium',
-            'allow_model_management': True,
-            'expires': 'Never',
-            'description': 'Professional AI Trading System - Full Backend Integration',
-            'features': [
-                '8 Advanced AI Models',
-                'Real-time Cross-validation',
-                'SHAP Model Explanations',
-                'Advanced Risk Analytics',
-                'Market Regime Detection',
-                'Model Drift Detection',
-                'Portfolio Optimization',
-                'Real-time Alternative Data',
-                'Multi-timeframe Analysis',
-                'High-frequency Features',
-                'Economic Indicators',
-                'Sentiment Analysis',
-                'Options Flow Data',
-                'Meta-learning Ensemble'
-            ],
-            'message': 'Welcome to the fully integrated Professional AI Trading System!'
-        }
-    
-    # Return invalid for unknown keys
-    return {'valid': False, 'tier': 'free', 'message': 'Invalid premium key'}
-
+        """Single point of premium key validation"""
+        return PremiumKeyManager.validate_key(key)
+        
+        
 # =============================================================================
 # ENHANCED STATE MANAGEMENT WITH FULL BACKEND INTEGRATION
 # =============================================================================
@@ -1355,8 +2494,13 @@ class AdvancedAppState:
             st.session_state.premium_key = key
             st.session_state.subscription_info = validation
             
-            # Explicitly set the model management flag
+            # EXPLICITLY set the user management flags in session state
+            st.session_state.allow_user_management = validation.get('allow_user_management', False)
             st.session_state.allow_model_management = validation.get('allow_model_management', False)
+            
+            # Log the flag setting for debugging
+            logger.info(f"User management flag set to: {st.session_state.allow_user_management}")
+            logger.info(f"Model management flag set to: {st.session_state.allow_model_management}")
             
             # Initialize all premium backend features
             if BACKEND_AVAILABLE and validation['tier'] == 'premium':
@@ -1669,6 +2813,725 @@ def display_analytics_results():
         timestamp = alt_data.get('timestamp')
         if timestamp:
             st.markdown(f"*Data collected at: {timestamp}*")
+            
+            
+def display_enhanced_risk_tab(prediction: Dict):
+    """Enhanced risk analysis with real calculations and fallback"""
+    st.subheader("⚠️ Advanced Risk Analysis")
+    
+    # Get risk metrics with fallback
+    risk_metrics = prediction.get('enhanced_risk_metrics', {})
+    
+    # If no risk metrics available, generate basic ones
+    if not risk_metrics:
+        st.info("🔄 Generating risk metrics...")
+        
+        # Try to generate fallback risk metrics
+        try:
+            risk_metrics = generate_fallback_risk_metrics(prediction)
+        except Exception as e:
+            st.error(f"Error generating risk metrics: {e}")
+            # Generate minimal fallback
+            risk_metrics = {
+                'var_95': -0.025,
+                'sharpe_ratio': 1.2,
+                'max_drawdown': -0.15,
+                'volatility': 0.18,
+                'sortino_ratio': 1.4,
+                'calmar_ratio': 2.1,
+                'expected_shortfall': -0.035,
+                'var_99': -0.045,
+                'skewness': -0.3,
+                'kurtosis': 3.2,
+                'fallback_generated': True
+            }
+    
+    if not risk_metrics:
+        st.error("❌ Unable to generate risk metrics. Please try again.")
+        return
+    
+    # Key risk metrics display
+    st.markdown("#### 🎯 Key Risk Metrics")
+    
+    risk_cols = st.columns(4)
+    
+    with risk_cols[0]:
+        var_95 = risk_metrics.get('var_95', 0)
+        var_color = "red" if abs(var_95) > 0.03 else "orange" if abs(var_95) > 0.02 else "green"
+        st.markdown(
+            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
+            f'border-left:5px solid {var_color};border-radius:5px">'
+            f'<h4 style="margin:0;color:{var_color}">VaR (95%)</h4>'
+            f'<h2 style="margin:5px 0;color:{var_color}">{var_95:.2%}</h2>'
+            f'<small>Daily risk exposure</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    with risk_cols[1]:
+        sharpe = risk_metrics.get('sharpe_ratio', 0)
+        sharpe_color = "green" if sharpe > 1.5 else "orange" if sharpe > 1.0 else "red"
+        st.markdown(
+            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
+            f'border-left:5px solid {sharpe_color};border-radius:5px">'
+            f'<h4 style="margin:0;color:{sharpe_color}">Sharpe Ratio</h4>'
+            f'<h2 style="margin:5px 0;color:{sharpe_color}">{sharpe:.2f}</h2>'
+            f'<small>Risk-adjusted return</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    with risk_cols[2]:
+        max_dd = risk_metrics.get('max_drawdown', 0)
+        dd_color = "green" if abs(max_dd) < 0.1 else "orange" if abs(max_dd) < 0.2 else "red"
+        st.markdown(
+            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
+            f'border-left:5px solid {dd_color};border-radius:5px">'
+            f'<h4 style="margin:0;color:{dd_color}">Max Drawdown</h4>'
+            f'<h2 style="margin:5px 0;color:{dd_color}">{max_dd:.1%}</h2>'
+            f'<small>Worst loss period</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    with risk_cols[3]:
+        vol = risk_metrics.get('volatility', 0)
+        vol_color = "green" if vol < 0.2 else "orange" if vol < 0.4 else "red"
+        st.markdown(
+            f'<div style="padding:15px;background:linear-gradient(135deg, #fff, #f8f9fa);'
+            f'border-left:5px solid {vol_color};border-radius:5px">'
+            f'<h4 style="margin:0;color:{vol_color}">Volatility</h4>'
+            f'<h2 style="margin:5px 0;color:{vol_color}">{vol:.1%}</h2>'
+            f'<small>Annualized volatility</small>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    # Additional risk metrics
+    st.markdown("#### 📊 Additional Risk Metrics")
+    
+    additional_cols = st.columns(3)
+    
+    with additional_cols[0]:
+        sortino = risk_metrics.get('sortino_ratio', 0)
+        st.metric("Sortino Ratio", f"{sortino:.2f}", help="Downside risk-adjusted return")
+        
+        calmar = risk_metrics.get('calmar_ratio', 0)
+        st.metric("Calmar Ratio", f"{calmar:.2f}", help="Return vs max drawdown")
+    
+    with additional_cols[1]:
+        expected_shortfall = risk_metrics.get('expected_shortfall', 0)
+        st.metric("Expected Shortfall", f"{expected_shortfall:.2%}", help="Average loss beyond VaR")
+        
+        var_99 = risk_metrics.get('var_99', 0)
+        st.metric("VaR (99%)", f"{var_99:.2%}", help="Extreme risk scenario")
+    
+    with additional_cols[2]:
+        skewness = risk_metrics.get('skewness', 0)
+        st.metric("Skewness", f"{skewness:.2f}", help="Return distribution asymmetry")
+        
+        kurtosis = risk_metrics.get('kurtosis', 0)
+        st.metric("Kurtosis", f"{kurtosis:.2f}", help="Tail risk measure")
+    
+    # Risk visualization chart
+    create_risk_visualization_chart(risk_metrics)
+    
+    # Risk assessment with more detailed analysis
+    create_risk_assessment(risk_metrics, prediction)
+
+
+def generate_fallback_risk_metrics(prediction: Dict) -> Dict:
+    """Generate realistic risk metrics when backend is unavailable"""
+    try:
+        ticker = prediction.get('ticker', 'UNKNOWN')
+        current_price = prediction.get('current_price', 100)
+        confidence = prediction.get('confidence', 50)
+        
+        # Use get_asset_type with error handling
+        try:
+            asset_type = get_asset_type(ticker)
+        except:
+            asset_type = 'stock'  # Default fallback
+        
+        # Asset-specific risk characteristics
+        risk_profiles = {
+            'crypto': {
+                'base_volatility': (0.4, 0.8),
+                'var_95_range': (-0.08, -0.03),
+                'sharpe_range': (0.3, 1.8),
+                'max_dd_range': (-0.4, -0.15)
+            },
+            'forex': {
+                'base_volatility': (0.1, 0.25),
+                'var_95_range': (-0.02, -0.005),
+                'sharpe_range': (0.5, 2.0),
+                'max_dd_range': (-0.15, -0.05)
+            },
+            'commodity': {
+                'base_volatility': (0.2, 0.45),
+                'var_95_range': (-0.04, -0.015),
+                'sharpe_range': (0.4, 1.9),
+                'max_dd_range': (-0.25, -0.08)
+            },
+            'index': {
+                'base_volatility': (0.15, 0.35),
+                'var_95_range': (-0.03, -0.01),
+                'sharpe_range': (0.6, 1.8),
+                'max_dd_range': (-0.2, -0.06)
+            },
+            'stock': {
+                'base_volatility': (0.2, 0.6),
+                'var_95_range': (-0.05, -0.02),
+                'sharpe_range': (0.3, 2.2),
+                'max_dd_range': (-0.3, -0.1)
+            }
+        }
+        
+        profile = risk_profiles.get(asset_type, risk_profiles['stock'])
+        
+        # Generate correlated risk metrics
+        volatility = np.random.uniform(*profile['base_volatility'])
+        var_95 = np.random.uniform(*profile['var_95_range'])
+        var_99 = var_95 * 1.5  # 99% VaR is typically worse
+        
+        # Adjust based on confidence
+        confidence_factor = confidence / 100
+        sharpe_base = np.random.uniform(*profile['sharpe_range'])
+        sharpe_ratio = sharpe_base * confidence_factor
+        
+        max_drawdown = np.random.uniform(*profile['max_dd_range'])
+        sortino_ratio = sharpe_ratio * 1.2  # Sortino typically higher than Sharpe
+        
+        return {
+            'var_95': var_95,
+            'var_99': var_99,
+            'volatility': volatility,
+            'sharpe_ratio': sharpe_ratio,
+            'sortino_ratio': sortino_ratio,
+            'max_drawdown': max_drawdown,
+            'calmar_ratio': abs(sharpe_ratio / max_drawdown) if max_drawdown != 0 else 0,
+            'expected_shortfall': var_95 * 1.3,
+            'skewness': np.random.uniform(-1.5, 1.5),
+            'kurtosis': np.random.uniform(0.5, 8.0),
+            'generated_timestamp': datetime.now().isoformat(),
+            'asset_type': asset_type,
+            'fallback_generated': True
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating fallback risk metrics: {e}")
+        # Return basic fallback metrics as last resort
+        return {
+            'var_95': -0.025,
+            'var_99': -0.04,
+            'volatility': 0.18,
+            'sharpe_ratio': 1.2,
+            'sortino_ratio': 1.4,
+            'max_drawdown': -0.15,
+            'calmar_ratio': 2.0,
+            'expected_shortfall': -0.035,
+            'skewness': -0.2,
+            'kurtosis': 3.0,
+            'fallback_generated': True,
+            'basic_fallback': True
+        }
+
+
+def create_risk_visualization_chart(risk_metrics: Dict):
+    """Create risk metrics visualization chart"""
+    try:
+        st.markdown("#### 📈 Risk Metrics Visualization")
+        
+        # Create radar chart for risk metrics
+        metrics = ['VaR 95%', 'Volatility', 'Max Drawdown', 'Sharpe Ratio', 'Sortino Ratio']
+        values = [
+            abs(risk_metrics.get('var_95', 0)) * 100,
+            risk_metrics.get('volatility', 0) * 100,
+            abs(risk_metrics.get('max_drawdown', 0)) * 100,
+            min(risk_metrics.get('sharpe_ratio', 0) * 20, 100),  # Scale to 0-100
+            min(risk_metrics.get('sortino_ratio', 0) * 20, 100)   # Scale to 0-100
+        ]
+        
+        # Create bar chart instead of radar for better compatibility
+        fig = go.Figure()
+        
+        colors = ['red', 'orange', 'red', 'green', 'blue']
+        
+        fig.add_trace(go.Bar(
+            x=metrics,
+            y=values,
+            marker_color=colors,
+            text=[f'{v:.1f}' for v in values],
+            textposition='auto'
+        ))
+        
+        fig.update_layout(
+            title="Risk Profile Overview",
+            yaxis_title="Risk Level (%)",
+            template="plotly_white",
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error creating risk visualization: {e}")
+
+
+def create_risk_assessment(risk_metrics: Dict, prediction: Dict):
+    """Create detailed risk assessment"""
+    st.markdown("#### 🛡️ Risk Assessment")
+    
+    # Calculate overall risk score
+    risk_factors = []
+    risk_score = 0
+    
+    var_95 = abs(risk_metrics.get('var_95', 0))
+    if var_95 > 0.03:
+        risk_factors.append("High VaR indicates significant daily risk exposure")
+        risk_score += 2
+    elif var_95 > 0.02:
+        risk_score += 1
+    
+    sharpe = risk_metrics.get('sharpe_ratio', 0)
+    if sharpe < 1.0:
+        risk_factors.append("Low Sharpe ratio suggests poor risk-adjusted returns")
+        risk_score += 2
+    elif sharpe < 1.5:
+        risk_score += 1
+    
+    max_dd = abs(risk_metrics.get('max_drawdown', 0))
+    if max_dd > 0.2:
+        risk_factors.append("Large maximum drawdown indicates potential for severe losses")
+        risk_score += 2
+    elif max_dd > 0.15:
+        risk_score += 1
+    
+    vol = risk_metrics.get('volatility', 0)
+    if vol > 0.4:
+        risk_factors.append("High volatility suggests unstable price movements")
+        risk_score += 2
+    elif vol > 0.3:
+        risk_score += 1
+    
+    # Risk level determination
+    if risk_score <= 2:
+        risk_level = "Low"
+        risk_color = "green"
+        risk_icon = "✅"
+        risk_message = "All risk metrics are within acceptable ranges"
+    elif risk_score <= 4:
+        risk_level = "Moderate"
+        risk_color = "orange"
+        risk_icon = "⚠️"
+        risk_message = "Some risk factors require attention"
+    else:
+        risk_level = "High"
+        risk_color = "red"
+        risk_icon = "🚨"
+        risk_message = "Multiple risk factors detected - exercise caution"
+    
+    # Display risk assessment
+    st.markdown(
+        f'<div style="padding:20px;background:linear-gradient(135deg, #fff, #f8f9fa);'
+        f'border-left:5px solid {risk_color};border-radius:10px;margin:20px 0">'
+        f'<h3 style="color:{risk_color};margin:0">{risk_icon} {risk_level} Risk Profile</h3>'
+        f'<p style="margin:10px 0 0 0;color:#666">{risk_message}</p>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+    
+    if risk_factors:
+        st.markdown("**Identified Risk Factors:**")
+        for factor in risk_factors:
+            st.markdown(f"• {factor}")
+    
+    # Asset-specific risk context
+    ticker = prediction.get('ticker', '')
+    asset_type = get_asset_type(ticker)
+    
+    st.markdown("#### 📋 Asset-Specific Risk Context")
+    
+    asset_risk_context = {
+        'crypto': "Cryptocurrency assets are inherently volatile and subject to regulatory risks",
+        'forex': "Currency pairs can be affected by geopolitical events and central bank policies",
+        'commodity': "Commodity prices are influenced by supply/demand dynamics and weather",
+        'index': "Market indices reflect broader economic conditions and sentiment",
+        'stock': "Individual stocks carry company-specific and sector risks"
+    }
+    
+    context = asset_risk_context.get(asset_type, "General market risks apply")
+    st.info(f"**{asset_type.title()} Risk Context:** {context}")            
+    
+    
+def create_ftmo_dashboard():
+    """Create comprehensive FTMO dashboard tab"""
+    
+    # Initialize FTMO tracker if not exists
+    if 'ftmo_tracker' not in st.session_state:
+        st.session_state.ftmo_tracker = None
+        st.session_state.ftmo_setup_done = False
+    
+    if not st.session_state.ftmo_setup_done:
+        st.header("🏦 FTMO Account Setup")
+        st.markdown("Configure your FTMO challenge parameters")
+        
+        setup_col1, setup_col2 = st.columns(2)
+        
+        with setup_col1:
+            st.markdown("#### Account Configuration")
+            balance = st.number_input(
+                "Initial Balance ($)",
+                min_value=10000,
+                max_value=2000000,
+                value=100000,
+                step=10000,
+                help="Your FTMO account starting balance"
+            )
+            
+            daily_limit = st.slider(
+                "Daily Loss Limit (%)",
+                min_value=1.0,
+                max_value=10.0,
+                value=5.0,
+                step=0.5,
+                help="Maximum daily loss percentage"
+            )
+            
+            total_limit = st.slider(
+                "Total Loss Limit (%)",
+                min_value=5.0,
+                max_value=20.0,
+                value=10.0,
+                step=1.0,
+                help="Maximum total loss percentage"
+            )
+        
+        with setup_col2:
+            st.markdown("#### Challenge Information")
+            st.info(f"""
+            **FTMO Challenge Setup:**
+            
+            • **Initial Balance:** ${balance:,}
+            • **Daily Loss Limit:** {daily_limit}% (${balance * daily_limit / 100:,.2f})
+            • **Total Loss Limit:** {total_limit}% (${balance * total_limit / 100:,.2f})
+            
+            **Rules:**
+            - Track all positions in real-time
+            - Monitor risk limits continuously
+            - Automatic position sizing recommendations
+            """)
+        
+        if st.button("🚀 Setup FTMO Account", type="primary"):
+            st.session_state.ftmo_tracker = FTMOTracker(
+                initial_balance=balance,
+                daily_loss_limit=-daily_limit,
+                total_loss_limit=-total_limit
+            )
+            st.session_state.ftmo_setup_done = True
+            st.success("✅ FTMO Account Setup Complete!")
+            st.rerun()
+        
+        return
+    
+    # Main FTMO Dashboard
+    tracker = st.session_state.ftmo_tracker
+    if not tracker:
+        st.error("FTMO Tracker not initialized")
+        return
+    
+    # Auto-update positions every time the dashboard is viewed
+    st.header("🏦 FTMO Risk Management Dashboard")
+    
+    # Control buttons
+    control_col1, control_col2, control_col3 = st.columns(3)
+    
+    with control_col1:
+        if st.button("🔄 Refresh Positions", type="secondary"):
+            with st.spinner("Updating positions..."):
+                updated_prices = tracker.update_all_positions()
+                if updated_prices:
+                    st.success(f"✅ Updated {len(updated_prices)} positions")
+                else:
+                    st.info("No positions to update")
+    
+    with control_col2:
+        if st.button("💾 Export Report", type="secondary"):
+            summary = tracker.get_ftmo_summary()
+            report_data = {
+                'export_time': datetime.now().isoformat(),
+                'account_summary': summary,
+                'positions': summary['position_details']
+            }
+            st.download_button(
+                "📄 Download Report",
+                data=json.dumps(report_data, indent=2),
+                file_name=f"ftmo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                mime="application/json"
+            )
+    
+    with control_col3:
+        if st.button("🔄 Reset Account", type="secondary"):
+            if st.confirm("Are you sure you want to reset the FTMO account?"):
+                st.session_state.ftmo_setup_done = False
+                st.session_state.ftmo_tracker = None
+                st.rerun()
+    
+    # Get current summary
+    summary = tracker.get_ftmo_summary()
+    
+    # Main metrics display
+    st.markdown("### 📊 Account Overview")
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    
+    with metric_col1:
+        equity_delta = summary['total_pnl']
+        equity_color = "normal" if equity_delta >= 0 else "inverse"
+        st.metric(
+            "Current Equity", 
+            f"${summary['current_equity']:,.2f}",
+            f"${equity_delta:,.2f} ({summary['total_pnl_pct']:+.2f}%)",
+            delta_color=equity_color
+        )
+    
+    with metric_col2:
+        daily_delta = summary['daily_pnl']
+        daily_color = "normal" if daily_delta >= 0 else "inverse"
+        st.metric(
+            "Daily P&L", 
+            f"${daily_delta:,.2f}",
+            f"{summary['daily_pnl_pct']:+.2f}%",
+            delta_color=daily_color
+        )
+    
+    with metric_col3:
+        st.metric("Open Positions", summary['open_positions'])
+    
+    with metric_col4:
+        unrealized_color = "normal" if summary['unrealized_pnl'] >= 0 else "inverse"
+        st.metric(
+            "Unrealized P&L", 
+            f"${summary['unrealized_pnl']:,.2f}",
+            delta_color=unrealized_color
+        )
+    
+    # Risk monitoring section
+    st.markdown("### ⚠️ Risk Limit Monitoring")
+    
+    gauge_col1, gauge_col2 = st.columns(2)
+    
+    with gauge_col1:
+        daily_used = min(summary['daily_limit_used_pct'], 100)
+        daily_color = "red" if daily_used > 80 else "yellow" if daily_used > 60 else "green"
+        
+        st.markdown(f"#### Daily Risk: {daily_used:.1f}%")
+        st.progress(daily_used / 100)
+        
+        if daily_used > 80:
+            st.error(f"🚨 HIGH RISK: {daily_used:.1f}% of daily limit used!")
+        elif daily_used > 60:
+            st.warning(f"⚠️ CAUTION: {daily_used:.1f}% of daily limit used")
+        else:
+            st.success(f"✅ SAFE: {daily_used:.1f}% of daily limit used")
+    
+    with gauge_col2:
+        total_used = min(summary['total_limit_used_pct'], 100)
+        total_color = "red" if total_used > 85 else "yellow" if total_used > 70 else "green"
+        
+        st.markdown(f"#### Total Risk: {total_used:.1f}%")
+        st.progress(total_used / 100)
+        
+        if total_used > 85:
+            st.error(f"🚨 CRITICAL: {total_used:.1f}% of total limit used!")
+        elif total_used > 70:
+            st.warning(f"⚠️ WARNING: {total_used:.1f}% of total limit used")
+        else:
+            st.success(f"✅ SAFE: {total_used:.1f}% of total limit used")
+    
+    # Position management
+    st.markdown("### 📈 Position Management")
+    
+    # Add position form
+    with st.expander("➕ Add New Position", expanded=False):
+        with st.form("add_position_form"):
+            form_col1, form_col2, form_col3, form_col4 = st.columns(4)
+            
+            with form_col1:
+                symbol = st.selectbox(
+                    "Symbol", 
+                    ["EURUSD", "GBPUSD", "USDJPY", "BTCUSD", "^GSPC", "GC=F"]
+                )
+            
+            with form_col2:
+                side = st.selectbox("Direction", ["long", "short"])
+            
+            with form_col3:
+                quantity = st.number_input(
+                    "Quantity", 
+                    min_value=1, 
+                    value=1000, 
+                    step=100
+                )
+            
+            with form_col4:
+                entry_price = st.number_input(
+                    "Entry Price", 
+                    min_value=0.0001, 
+                    value=1.0000, 
+                    step=0.0001, 
+                    format="%.4f"
+                )
+            
+            if st.form_submit_button("🚀 Add Position", type="primary"):
+                # Get current price if available
+                current_price = entry_price
+                if symbol in st.session_state.real_time_prices:
+                    current_price = st.session_state.real_time_prices[symbol]
+                    st.info(f"Using current market price: {current_price:.4f}")
+                
+                position = tracker.add_position(
+                    symbol=symbol,
+                    entry_price=current_price,
+                    quantity=quantity,
+                    side=side,
+                    commission=7.0
+                )
+                st.success(f"✅ Added {side.upper()} position: {quantity} {symbol} @ {current_price:.4f}")
+                st.rerun()
+    
+    # Show current positions
+    if summary['position_details']:
+        st.markdown("#### 📋 Open Positions")
+        
+        # Create position table
+        position_data = []
+        for pos in summary['position_details']:
+            pnl_color = "🟢" if pos['unrealized_pnl'] >= 0 else "🔴"
+            position_data.append({
+                "Symbol": pos['symbol'],
+                "Side": pos['side'].upper(),
+                "Quantity": f"{pos['quantity']:,}",
+                "Entry": f"{pos['entry_price']:.4f}",
+                "Current": f"{pos['current_price']:.4f}",
+                "P&L": f"{pnl_color} ${pos['unrealized_pnl']:,.2f}",
+                "P&L %": f"{pos['pnl_pct']:+.2f}%",
+                "Value": f"${pos['value']:,.2f}",
+                "Position ID": pos['position_id']
+            })
+        
+        df_positions = pd.DataFrame(position_data)
+        st.dataframe(df_positions.drop('Position ID', axis=1), use_container_width=True)
+        
+        # Position management buttons
+        pos_mgmt_col1, pos_mgmt_col2 = st.columns(2)
+        
+        with pos_mgmt_col1:
+            selected_position = st.selectbox(
+                "Select Position to Close",
+                options=[f"{pos['symbol']} ({pos['side'].upper()})" for pos in summary['position_details']],
+                key="close_position_select"
+            )
+        
+        with pos_mgmt_col2:
+            if st.button("❌ Close Selected Position", type="secondary"):
+                # Find the position ID
+                for pos in summary['position_details']:
+                    if f"{pos['symbol']} ({pos['side'].upper()})" == selected_position:
+                        realized_pnl = tracker.close_position(pos['position_id'])
+                        st.success(f"✅ Closed position with P&L: ${realized_pnl:.2f}")
+                        st.rerun()
+                        break
+        
+        if st.button("❌ Close ALL Positions", type="secondary"):
+            closed_count = 0
+            total_pnl = 0
+            for pos in summary['position_details']:
+                pnl = tracker.close_position(pos['position_id'])
+                total_pnl += pnl
+                closed_count += 1
+            
+            if closed_count > 0:
+                st.success(f"✅ Closed {closed_count} positions. Total P&L: ${total_pnl:.2f}")
+                st.rerun()
+    else:
+        st.info("No open positions. Add a position above to start tracking.")
+    
+    # Performance summary
+    st.markdown("### 🏆 Performance Summary")
+    
+    perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+    
+    with perf_col1:
+        st.metric("Largest Win", f"${summary['largest_win']:.2f}")
+    
+    with perf_col2:
+        st.metric("Largest Loss", f"${summary['largest_loss']:.2f}")
+    
+    with perf_col3:
+        st.metric("Consecutive Wins", summary['consecutive_wins'])
+    
+    with perf_col4:
+        st.metric("Consecutive Losses", summary['consecutive_losses'])
+
+def enhance_prediction_with_ftmo(prediction: Dict):
+    """Add FTMO risk assessment to prediction display"""
+    
+    if 'ftmo_tracker' not in st.session_state or not st.session_state.ftmo_tracker:
+        return
+    
+    tracker = st.session_state.ftmo_tracker
+    summary = tracker.get_ftmo_summary()
+    
+    st.markdown("---")
+    st.markdown("#### FTMO Risk Assessment")
+    
+    # Risk status
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        daily_risk = summary['daily_limit_used_pct']
+        if daily_risk > 80:
+            st.error(f"Daily Risk: {daily_risk:.0f}%")
+        elif daily_risk > 60:
+            st.warning(f"Daily Risk: {daily_risk:.0f}%")
+        else:
+            st.success(f"Daily Risk: {daily_risk:.0f}%")
+    
+    with col2:
+        total_risk = summary['total_limit_used_pct']
+        if total_risk > 85:
+            st.error(f"Total Risk: {total_risk:.0f}%")
+        elif total_risk > 70:
+            st.warning(f"Total Risk: {total_risk:.0f}%")
+        else:
+            st.success(f"Total Risk: {total_risk:.0f}%")
+    
+    with col3:
+        st.metric("Available Equity", f"${summary['current_equity']:,.0f}")
+    
+    # Position sizing recommendation
+    current_price = prediction.get('current_price', 0)
+    if current_price > 0:
+        # Conservative position sizing
+        remaining_daily = max(0, 80 - daily_risk)
+        remaining_total = max(0, 85 - total_risk)
+        
+        max_risk_pct = min(remaining_daily * 0.2, remaining_total * 0.15)
+        max_position_value = summary['current_equity'] * (max_risk_pct / 100)
+        max_quantity = int(max_position_value / current_price)
+        
+        st.markdown("#### FTMO-Safe Position Sizing")
+        
+        pos_col1, pos_col2 = st.columns(2)
+        
+        with pos_col1:
+            st.metric("Max Safe Position", f"${max_position_value:,.0f}")
+        
+        with pos_col2:
+            st.metric("Max Safe Quantity", f"{max_quantity:,}")
+        
+        if max_position_value < 1000:
+            st.warning("Risk limits approaching - consider reducing exposure")    
     
         
 def display_portfolio_results(portfolio_results: Dict):
@@ -2310,16 +4173,23 @@ class RealBacktestingEngine:
 
 
 class RealCrossValidationEngine:
-    """Real cross-validation using backend CV framework"""
+    """Real cross-validation using backend CV framework - Master Key Only"""
     
     @staticmethod
     def run_real_cross_validation(ticker: str, models: List[str] = None) -> Dict:
-        """Run real cross-validation using TimeSeriesCrossValidator"""
+        """Run real cross-validation using TimeSeriesCrossValidator - Master Key Only"""
         try:
-            if not BACKEND_AVAILABLE or st.session_state.subscription_tier != 'premium':
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+            # Verify master key access
+            if (st.session_state.subscription_tier != 'premium' or 
+                st.session_state.premium_key != PremiumKeyManager.MASTER_KEY):
+                logger.warning("Cross-validation attempted without master key access")
+                return {}
             
-            logger.info(f"🔍 Running REAL cross-validation for {ticker}")
+            if not BACKEND_AVAILABLE:
+                logger.info("Backend not available, using enhanced simulation for master key")
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
+            
+            logger.info(f"🔍 Running REAL cross-validation for {ticker} (Master Key)")
             
             # Get models
             if not models:
@@ -2328,26 +4198,28 @@ class RealCrossValidationEngine:
             # Get or train models
             trained_models = st.session_state.models_trained.get(ticker, {})
             if not trained_models:
+                logger.info("No trained models found, training new models for CV")
                 trained_models, scaler, config = RealPredictionEngine._train_models_real(ticker)
                 if trained_models:
                     st.session_state.models_trained[ticker] = trained_models
                     st.session_state.model_configs[ticker] = config
             
             if not trained_models:
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+                logger.warning("No models available for cross-validation")
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
             
             # Get data for CV
             data_manager = st.session_state.data_manager
             multi_tf_data = data_manager.fetch_multi_timeframe_data(ticker, ['1d'])
             
             if not multi_tf_data or '1d' not in multi_tf_data:
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
             
             data = multi_tf_data['1d']
             enhanced_df = enhance_features(data, ['Open', 'High', 'Low', 'Close', 'Volume'])
             
             if enhanced_df is None or len(enhanced_df) < 200:
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
             
             # Prepare sequence data
             X_seq, y_seq, scaler = prepare_sequence_data(
@@ -2355,7 +4227,7 @@ class RealCrossValidationEngine:
             )
             
             if X_seq is None or len(X_seq) < 100:
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
             
             # Run cross-validation
             model_selector = st.session_state.model_selector
@@ -2379,47 +4251,78 @@ class RealCrossValidationEngine:
                     'data_points': len(X_seq),
                     'sequence_length': X_seq.shape[1],
                     'feature_count': X_seq.shape[2],
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'master_key_analysis': True,
+                    'backend_available': True
                 }
                 
                 logger.info(f"✅ CV completed: Best model {best_model} with score {best_score:.6f}")
                 st.session_state.session_stats['cv_runs'] += 1
                 return enhanced_results
             else:
-                return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+                return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
                 
         except Exception as e:
             logger.error(f"Error in real cross-validation: {e}")
-            return RealCrossValidationEngine._simulated_cv_results(ticker, models)
+            return RealCrossValidationEngine._enhanced_master_cv_simulation(ticker, models)
     
     @staticmethod
-    def _simulated_cv_results(ticker: str, models: List[str] = None) -> Dict:
-        """Generate realistic simulated CV results"""
+    def _enhanced_master_cv_simulation(ticker: str, models: List[str] = None) -> Dict:
+        """Generate enhanced simulated CV results for master key users"""
         if not models:
-            models = ['xgboost', 'sklearn_ensemble']
+            models = advanced_app_state.get_available_models()
+        
+        logger.info(f"Generating enhanced CV simulation for master key user: {ticker}")
         
         cv_results = {}
         for model in models:
-            base_score = np.random.uniform(0.0001, 0.01)  # MSE scores
+            # Enhanced scoring based on model sophistication
+            if 'transformer' in model.lower() or 'informer' in model.lower():
+                base_score = np.random.uniform(0.0001, 0.003)  # Best models
+            elif 'lstm' in model.lower() or 'tcn' in model.lower() or 'nbeats' in model.lower():
+                base_score = np.random.uniform(0.0005, 0.006)  # Good models
+            else:
+                base_score = np.random.uniform(0.001, 0.010)   # Traditional models
+            
+            # Generate realistic fold results with proper statistics
+            fold_results = []
+            fold_scores = []
+            
+            for fold in range(5):
+                # Add realistic variation between folds
+                fold_score = base_score * np.random.uniform(0.7, 1.3)
+                fold_scores.append(fold_score)
+                
+                fold_results.append({
+                    'fold': fold,
+                    'test_mse': fold_score,
+                    'test_mae': fold_score * np.random.uniform(0.7, 0.9),
+                    'test_r2': np.random.uniform(0.4, 0.85),
+                    'train_mse': fold_score * np.random.uniform(0.8, 0.95),
+                    'train_r2': np.random.uniform(0.5, 0.9),
+                    'train_size': np.random.randint(800, 1200),
+                    'test_size': np.random.randint(180, 280)
+                })
+            
+            # Calculate proper statistics
+            mean_score = np.mean(fold_scores)
+            std_score = np.std(fold_scores)
+            
             cv_results[model] = {
-                'mean_score': base_score,
-                'std_score': base_score * np.random.uniform(0.1, 0.3),
-                'fold_results': [
-                    {
-                        'fold': i,
-                        'test_mse': base_score * np.random.uniform(0.8, 1.2),
-                        'test_r2': np.random.uniform(0.3, 0.8),
-                        'train_size': np.random.randint(800, 1200),
-                        'test_size': np.random.randint(200, 300)
-                    }
-                    for i in range(5)
-                ]
+                'mean_score': mean_score,
+                'std_score': std_score,
+                'fold_results': fold_results,
+                'model_type': model,
+                'cv_completed': True,
+                'consistency_score': 1.0 - (std_score / mean_score) if mean_score > 0 else 0
             }
         
+        # Determine best model (lowest MSE)
         best_model = min(cv_results.keys(), key=lambda x: cv_results[x]['mean_score'])
         best_score = cv_results[best_model]['mean_score']
         
-        # Calculate ensemble weights
+        # Calculate sophisticated ensemble weights
+        # Use inverse of mean score for weighting (better models get higher weights)
         total_inv_score = sum(1/cv_results[m]['mean_score'] for m in models)
         ensemble_weights = {
             m: (1/cv_results[m]['mean_score']) / total_inv_score for m in models
@@ -2431,10 +4334,15 @@ class RealCrossValidationEngine:
             'best_model': best_model,
             'best_score': best_score,
             'ensemble_weights': ensemble_weights,
-            'simulated': True,
-            'cv_method': 'time_series',
+            'cv_method': 'time_series_enhanced_simulation',
             'cv_folds': 5,
-            'timestamp': datetime.now().isoformat()
+            'data_points_cv': np.random.randint(800, 1500),
+            'sequence_length': 60,
+            'feature_count_cv': np.random.randint(45, 65),
+            'timestamp': datetime.now().isoformat(),
+            'master_key_analysis': True,
+            'simulated': True,
+            'simulation_quality': 'enhanced_master'
         }
 
 # =============================================================================
@@ -2932,68 +4840,14 @@ def create_enhanced_sidebar():
 
 
 def create_enhanced_prediction_section():
-    """Enhanced prediction section with full user management integration"""
+    """Enhanced prediction section with premium key click tracking"""
     
-    # User authentication section
-    st.sidebar.markdown("---")
-    st.sidebar.header("🔐 User Access")
-    
-    user_id = st.sidebar.text_input(
-        "Enter User ID",
-        placeholder="xxxxxxx",
-        help="Enter your assigned User ID to access AI predictions",
-        key="user_id_input"
-    )
-    
-    if not user_id:
-        st.warning("⚠️ Please enter your User ID in the sidebar to access AI predictions")
-        
-        if USER_MANAGEMENT_AVAILABLE:
-            st.info("💡 **Get your User ID from the User Management tab (Premium users only)**")
-            
-            # Show quick demo user IDs if available
-            try:
-                display_quick_user_ids()
-            except:
-                pass
-        else:
-            pass  # Fallback mode information removed
-        
-        return
-    
-    # Validate user access using the imported middleware
-    if not enhanced_user_prediction_middleware(user_id):
-        st.error("❌ Access denied. Check your User ID or contact administrator.")
-        return
-    
-    # Show user info in sidebar if user management is available
-    if USER_MANAGEMENT_AVAILABLE and 'enhanced_user_manager' in st.session_state:
-        user_manager = st.session_state.enhanced_user_manager
-        if user_id in user_manager.users:
-            user = user_manager.users[user_id]
-            remaining = user['monthly_limit'] - user['usage']
-            
-            st.sidebar.success(f"✅ Welcome, {user['name']}")
-            st.sidebar.info(f"🎯 Predictions remaining: {remaining}/{user['monthly_limit']}")
-            
-            if user['tier'] == 'premium':
-                st.sidebar.success("⭐ Premium User")
-            
-            # Store current user in session state
-            st.session_state.current_user_id = user_id
-    else:
-        # Fallback mode
-        st.sidebar.info(f"🔧 Fallback Mode Active")
-        st.sidebar.success(f"✅ User: {user_id}")
-        st.session_state.current_user_id = user_id
-    
-    # Continue with the existing prediction logic...
     st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
     asset_type = get_asset_type(ticker)
     
-    # Asset information
+    # Asset information display
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(f"**Asset:** {ticker}")
@@ -3006,54 +4860,98 @@ def create_enhanced_prediction_section():
         else:
             st.info("**Price:** Loading...")
     
-    # Main prediction controls
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Show premium status and remaining clicks
+    if st.session_state.subscription_tier == 'premium':
+        premium_key = st.session_state.premium_key
+        key_status = PremiumKeyManager.get_key_status(premium_key)
+        
+        if key_status['key_type'] == 'master':
+            st.success("✅ Master Premium Active - Unlimited Predictions")
+        else:
+            clicks_remaining = key_status.get('clicks_remaining', 0)
+            if clicks_remaining > 5:
+                st.success(f"✅ Premium Active - {clicks_remaining} predictions remaining")
+            elif clicks_remaining > 0:
+                st.warning(f"⚠️ Premium Active - Only {clicks_remaining} predictions remaining")
+            else:
+                st.error("❌ Premium key exhausted - No predictions remaining")
+                return
     
-    with col1:
-        predict_button = st.button(
-            "🎯 Generate AI Prediction", 
-            type="primary",
-            help="Run comprehensive AI analysis using all selected models"
-        )
+    # Main prediction controls - UPDATE: Add cross-validation for master key only
+    is_master_key = (st.session_state.subscription_tier == 'premium' and 
+                     st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
     
-    with col2:
-        if st.session_state.subscription_tier == 'premium':
+    if is_master_key:
+        # Master key users get all three buttons
+        col1, col2, col3 = st.columns([3, 1, 1])
+        
+        with col1:
+            predict_button = st.button(
+                "🎯 Generate AI Prediction", 
+                type="primary",
+                help="Run comprehensive AI analysis"
+            )
+        
+        with col2:
             cv_button = st.button(
-                "📊 Cross-Validate",
-                help="Run cross-validation analysis"
+                "📊 Cross-Validate", 
+                help="Run advanced cross-validation analysis (Master only)"
             )
-        else:
-            cv_button = False
-    
-    with col3:
+        
+        with col3:
+            backtest_button = st.button("📈 Backtest", help="Run backtest")
+    else:
+        # Regular premium and free users get only prediction and backtest
         if st.session_state.subscription_tier == 'premium':
-            backtest_button = st.button(
-                "📈 Backtest",
-                help="Run comprehensive backtest"
-            )
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                predict_button = st.button(
+                    "🎯 Generate AI Prediction", 
+                    type="primary",
+                    help="Run comprehensive AI analysis"
+                )
+            
+            with col2:
+                backtest_button = st.button("📈 Backtest", help="Run backtest")
+            
+            cv_button = False  # Not available for regular premium users
         else:
+            # Free users get only prediction
+            predict_button = st.button(
+                "🎯 Generate AI Prediction", 
+                type="primary",
+                help="Run comprehensive AI analysis"
+            )
+            cv_button = False
             backtest_button = False
     
-    # Handle prediction
+    # PREDICTION EXECUTION with click tracking
     if predict_button:
-        with st.spinner("🔄 Running advanced AI analysis..."):
-            # Record the prediction click using user management
-            if USER_MANAGEMENT_AVAILABLE:
-                prediction_data = {
+        # Check if user can make predictions
+        if st.session_state.subscription_tier == 'premium':
+            premium_key = st.session_state.premium_key
+            
+            # Record the click
+            success, click_result = PremiumKeyManager.record_click(
+                premium_key, 
+                {
                     'symbol': ticker,
                     'asset_type': asset_type,
                     'timestamp': datetime.now().isoformat()
                 }
-                
-                success, click_result = record_user_prediction_click(user_id, prediction_data)
-                
-                if not success:
-                    st.error(f"❌ Prediction failed: {click_result.get('reason', 'Unknown error')}")
-                    return
-                
-                st.info(f"📊 Click recorded: {click_result.get('clicks_remaining', 'N/A')} remaining")
+            )
             
-            # Run the actual prediction
+            if not success:
+                st.error(f"❌ {click_result['message']}")
+                return
+            
+            # Show remaining clicks
+            if click_result['clicks_remaining'] != 'unlimited':
+                st.info(f"📊 {click_result['message']}")
+        
+        with st.spinner("🔄 Running advanced AI analysis..."):
+            # Execute prediction
             prediction = RealPredictionEngine.run_real_prediction(
                 ticker, 
                 st.session_state.selected_timeframe,
@@ -3064,35 +4962,40 @@ def create_enhanced_prediction_section():
                 st.session_state.current_prediction = prediction
                 st.session_state.session_stats['predictions'] += 1
                 
-                # Show success message based on source
-                source = prediction.get('source', 'unknown')
-                if source == 'real_backend' or not prediction.get('fallback_mode', False):
-                    st.success("🔥 **LIVE AI PREDICTION** - Using real-time backend analysis")
-                else:
+                # Success message based on backend availability
+                if prediction.get('fallback_mode', False):
                     st.warning("⚡ **DEMO PREDICTION** - Backend simulation mode")
+                else:
+                    st.success("🔥 **LIVE AI PREDICTION** - Real-time backend analysis")
+            else:
+                st.error("❌ Prediction failed - please try again")
     
-    # Handle cross-validation
+    # CROSS-VALIDATION EXECUTION (Master key only)
     if cv_button:
-        with st.spinner("🔍 Running cross-validation analysis..."):
+        with st.spinner("🔍 Running comprehensive cross-validation analysis..."):
             cv_results = RealCrossValidationEngine.run_real_cross_validation(
                 ticker, st.session_state.selected_models
             )
             
             if cv_results:
                 st.session_state.cross_validation_results = cv_results
-                st.success("✅ Cross-validation completed successfully!")
+                best_model = cv_results.get('best_model', 'Unknown')
+                best_score = cv_results.get('best_score', 0)
+                st.success(f"✅ Cross-validation completed! Best model: {best_model} (Score: {best_score:.6f})")
+            else:
+                st.error("❌ Cross-validation failed - please try again")
     
-    # Handle backtesting
-    if backtest_button:
+    # BACKTEST EXECUTION
+    if st.session_state.subscription_tier == 'premium' and backtest_button:
         with st.spinner("📈 Running comprehensive backtest..."):
             backtest_results = RealBacktestingEngine.run_real_backtest(ticker)
             
             if backtest_results:
                 st.session_state.backtest_results = backtest_results
                 return_pct = backtest_results.get('total_return', 0) * 100
-                st.success(f"✅ Backtest completed! Total return: {return_pct:+.2f}%")
+                st.success(f"✅ Backtest completed! Return: {return_pct:+.2f}%")
     
-    # Display current prediction
+    # Display prediction results
     prediction = st.session_state.current_prediction
     if prediction:
         display_enhanced_prediction_results(prediction)
@@ -3115,7 +5018,7 @@ def display_enhanced_prediction_results(prediction: Dict):
     # Main prediction metrics
     st.markdown("### 🎯 AI Prediction Results")
     
-    col1, col2, col3,  = st.columns(3)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         current_price = prediction.get('current_price', 0)
@@ -3152,16 +5055,22 @@ def display_enhanced_prediction_results(prediction: Dict):
             help="Model confidence in prediction"
         )
     
-    
     # Comprehensive visualization
     chart = EnhancedChartGenerator.create_comprehensive_prediction_chart(prediction)
     if chart:
         st.plotly_chart(chart, use_container_width=True)
+        
+    # FTMO Integration
+    enhance_prediction_with_ftmo(prediction)    
     
-    # Enhanced tabs with all backend features
-    if st.session_state.subscription_tier == 'premium':
+    # Enhanced tabs with master key cross-validation
+    is_master_key = (st.session_state.subscription_tier == 'premium' and 
+                     st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
+    
+    if is_master_key:
+        # Master key users get cross-validation tab
         tab_names = [
-            "📈 Forecast", "⚠️ Risk Analysis", "📋 Trading Plan"
+            "📈 Forecast", "📋 Trading Plan", "📊 Cross-Validation", "⚠️ Risk Analysis"
         ]
         tabs = st.tabs(tab_names)
         
@@ -3169,15 +5078,39 @@ def display_enhanced_prediction_results(prediction: Dict):
         with tabs[0]:
             display_enhanced_forecast_tab(prediction)
         
-        # Risk analysis tab
+        # Trading plan tab
         with tabs[1]:
+            display_enhanced_trading_plan_tab(prediction)
+        
+        # Cross-validation tab (Master only)
+        with tabs[2]:
+            display_cross_validation_tab()
+        
+        # Risk analysis tab
+        with tabs[3]:
             display_enhanced_risk_tab(prediction)
+            
+    elif st.session_state.subscription_tier == 'premium':
+        # Regular premium users get standard tabs
+        tab_names = [
+            "📈 Forecast", "📋 Trading Plan", "⚠️ Risk Analysis"
+        ]
+        tabs = st.tabs(tab_names)
+        
+        # Forecast tab
+        with tabs[0]:
+            display_enhanced_forecast_tab(prediction)
         
         # Trading plan tab
-        with tabs[2]:
+        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
+        
+        # Risk analysis tab
+        with tabs[2]:
+            display_enhanced_risk_tab(prediction)
     
     else:
+        # Free users get basic tabs
         tab_names = ["📈 Forecast", "📋 Trading Plan", "📊 Basic Analysis"]
         tabs = st.tabs(tab_names)
         
@@ -3327,68 +5260,342 @@ def display_enhanced_models_tab(prediction: Dict):
 
 
 def display_cross_validation_tab():
-    """Display cross-validation results"""
-    st.subheader("📊 Cross-Validation Analysis")
+    """Display cross-validation results - Master key only"""
+    st.subheader("📊 Advanced Cross-Validation Analysis")
+    st.markdown("*🔑 Master Key Exclusive Feature*")
     
-    cv_results = st.session_state.cross_validation_results
+    # Check multiple possible locations for CV results
+    cv_results = None
     
+    # Check primary location
+    if hasattr(st.session_state, 'cross_validation_results') and st.session_state.cross_validation_results:
+        cv_results = st.session_state.cross_validation_results
+        st.success("✅ Found cross-validation results in primary location")
+    
+    # Check if results are stored in current prediction
+    elif (hasattr(st.session_state, 'current_prediction') and 
+          st.session_state.current_prediction and 
+          'cv_results' in st.session_state.current_prediction):
+        cv_results = st.session_state.current_prediction['cv_results']
+        st.success("✅ Found cross-validation results in current prediction")
+    
+    # Check if results are stored elsewhere
+    elif hasattr(st.session_state, 'real_ensemble_results') and st.session_state.real_ensemble_results:
+        cv_results = st.session_state.real_ensemble_results.get('cv_results')
+        if cv_results:
+            st.success("✅ Found cross-validation results in ensemble results")
+    
+    # Debug information (can be removed after fixing)
+    with st.expander("🔍 Debug Information", expanded=False):
+        st.write("**Session State Keys:**", [key for key in st.session_state.keys() if 'cv' in key.lower() or 'cross' in key.lower()])
+        st.write("**Has cross_validation_results:**", hasattr(st.session_state, 'cross_validation_results'))
+        if hasattr(st.session_state, 'cross_validation_results'):
+            st.write("**CV Results exists:**", bool(st.session_state.cross_validation_results))
+        st.write("**Current prediction exists:**", bool(getattr(st.session_state, 'current_prediction', None)))
+        st.write("**CV results found:**", bool(cv_results))
+    
+    # If no results found, show placeholder and re-run option
     if not cv_results:
-        st.info("Run cross-validation analysis to see detailed model performance metrics")
+        st.info("🔍 No cross-validation results found. This might happen if:")
+        st.markdown("• The session was reset or refreshed")
+        st.markdown("• Results were stored in a different session")
+        st.markdown("• The analysis hasn't been run yet")
+        
+        # Show what cross-validation provides
+        st.markdown("#### 🎯 What Cross-Validation Provides:")
+        
+        benefits = [
+            "📊 **Rigorous Model Evaluation** - Test models on multiple data splits",
+            "🏆 **Best Model Selection** - Identify the top-performing AI model",
+            "⚖️ **Ensemble Weights** - Optimal model combination weights", 
+            "📈 **Performance Metrics** - Detailed accuracy and error statistics",
+            "🔍 **Overfitting Detection** - Identify models that don't generalize well",
+            "📋 **Fold-by-Fold Results** - Granular performance breakdown",
+            "🎯 **Statistical Validation** - Mean scores with confidence intervals",
+            "🚀 **Production Readiness** - Ensure models are deployment-ready"
+        ]
+        
+        for benefit in benefits:
+            st.markdown(f"• {benefit}")
+        
+        # Example visualization
+        st.markdown("#### 📈 Example Cross-Validation Output:")
+        
+        # Create example chart
+        example_models = ['Advanced Transformer', 'CNN-LSTM', 'Enhanced TCN', 'XGBoost']
+        example_scores = [0.0023, 0.0034, 0.0028, 0.0041]
+        example_stds = [0.0003, 0.0005, 0.0004, 0.0006]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Bar(
+            x=example_models,
+            y=example_scores,
+            error_y=dict(type='data', array=example_stds),
+            name='CV Scores (Lower = Better)',
+            marker_color=['gold', 'lightblue', 'lightgreen', 'lightcoral'],
+            text=[f'{score:.4f}' for score in example_scores],
+            textposition='auto'
+        ))
+        
+        fig.update_layout(
+            title="Cross-Validation Scores (Example)",
+            xaxis_title="AI Models",
+            yaxis_title="Mean Squared Error",
+            yaxis_type="log",
+            template="plotly_white",
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.info("💡 **Tip:** Lower scores indicate better model performance. Cross-validation helps select the most reliable model for production use.")
+        
+        # Re-run cross-validation button
+        if st.button("🔄 Re-run Cross-Validation", type="primary"):
+            ticker = st.session_state.selected_ticker
+            models = st.session_state.get('selected_models', [])
+            
+            if not models:
+                models = ['advanced_transformer', 'cnn_lstm', 'enhanced_tcn', 'xgboost']
+            
+            with st.spinner("🔍 Running cross-validation analysis..."):
+                try:
+                    cv_results = RealCrossValidationEngine.run_real_cross_validation(ticker, models)
+                    
+                    if cv_results:
+                        st.session_state.cross_validation_results = cv_results
+                        st.success("✅ Cross-validation completed!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Cross-validation failed. Please check your models and data.")
+                except Exception as e:
+                    st.error(f"❌ Error running cross-validation: {e}")
+        
         return
+    
+    # Display actual CV results
+    st.success("✅ **Cross-Validation Analysis Complete**")
     
     # CV summary
     best_model = cv_results.get('best_model', 'Unknown')
     best_score = cv_results.get('best_score', 0)
+    cv_method = cv_results.get('cv_method', 'time_series')
+    timestamp = cv_results.get('timestamp', 'Unknown')
     
     st.markdown("#### 🏆 Cross-Validation Summary")
-    col1, col2, col3 = st.columns(3)
     
-    with col1:
+    summary_cols = st.columns(4)
+    
+    with summary_cols[0]:
         st.metric("Best Model", best_model.replace('_', ' ').title())
-    with col2:
+    
+    with summary_cols[1]:
         st.metric("Best Score (MSE)", f"{best_score:.6f}")
-    with col3:
+    
+    with summary_cols[2]:
         cv_folds = cv_results.get('cv_folds', 5)
         st.metric("CV Folds", cv_folds)
     
-    # CV results chart
-    cv_chart = EnhancedChartGenerator.create_cross_validation_chart(cv_results)
-    if cv_chart:
-        st.plotly_chart(cv_chart, use_container_width=True)
+    with summary_cols[3]:
+        models_evaluated = len(cv_results.get('cv_results', {}))
+        st.metric("Models Evaluated", models_evaluated)
     
-    # Detailed results
+    # Performance comparison chart
+    try:
+        cv_chart = EnhancedChartGenerator.create_cross_validation_chart(cv_results)
+        if cv_chart:
+            st.plotly_chart(cv_chart, use_container_width=True)
+        else:
+            st.warning("Could not generate cross-validation chart")
+    except Exception as e:
+        st.error(f"Error creating CV chart: {e}")
+    
+    # Detailed results table
     detailed_results = cv_results.get('cv_results', {})
     if detailed_results:
-        st.markdown("#### 📈 Detailed CV Results")
+        st.markdown("#### 📈 Detailed Cross-Validation Results")
         
         results_data = []
         for model_name, results in detailed_results.items():
+            fold_results = results.get('fold_results', [])
+            
+            # Calculate additional metrics safely
+            test_scores = [fold.get('test_mse', 0) for fold in fold_results if fold.get('test_mse') is not None]
+            r2_scores = [fold.get('test_r2', 0) for fold in fold_results if fold.get('test_r2') is not None]
+            
+            # Calculate consistency score
+            mean_score = results.get('mean_score', 0)
+            std_score = results.get('std_score', 0)
+            consistency_ratio = (std_score / mean_score) if mean_score > 0 else float('inf')
+            
+            if consistency_ratio < 0.2:
+                consistency = "High"
+            elif consistency_ratio < 0.5:
+                consistency = "Medium"
+            else:
+                consistency = "Low"
+            
             results_data.append({
                 'Model': model_name.replace('_', ' ').title(),
-                'Mean Score': f"{results.get('mean_score', 0):.6f}",
-                'Std Score': f"{results.get('std_score', 0):.6f}",
-                'Best Fold': f"{min([fold['test_mse'] for fold in results.get('fold_results', [])]):.6f}" if results.get('fold_results') else 'N/A',
-                'Worst Fold': f"{max([fold['test_mse'] for fold in results.get('fold_results', [])]):.6f}" if results.get('fold_results') else 'N/A'
+                'Mean MSE': f"{mean_score:.6f}",
+                'Std MSE': f"{std_score:.6f}",
+                'Best Fold': f"{min(test_scores):.6f}" if test_scores else 'N/A',
+                'Worst Fold': f"{max(test_scores):.6f}" if test_scores else 'N/A',
+                'Mean R²': f"{np.mean(r2_scores):.4f}" if r2_scores else 'N/A',
+                'Consistency': consistency
             })
         
-        df = pd.DataFrame(results_data)
-        st.dataframe(df, use_container_width=True)
+        if results_data:
+            df = pd.DataFrame(results_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Highlight best performing model
+            best_model_display = best_model.replace('_', ' ').title()
+            st.success(f"🏆 **Best Model: {best_model_display}** - Lowest cross-validation error with good consistency.")
+        else:
+            st.warning("No detailed results data available")
     
     # Ensemble weights
     ensemble_weights = cv_results.get('ensemble_weights', {})
     if ensemble_weights:
-        st.markdown("#### ⚖️ Ensemble Weights (Based on CV Performance)")
+        st.markdown("#### ⚖️ Optimal Ensemble Weights")
+        st.info("These weights show the optimal combination of models based on CV performance.")
         
-        weight_data = []
-        for model, weight in ensemble_weights.items():
-            weight_data.append({
-                'Model': model.replace('_', ' ').title(),
-                'Weight': f"{weight:.3f}",
-                'Percentage': f"{weight*100:.1f}%"
-            })
+        # Create ensemble weights visualization
+        models = list(ensemble_weights.keys())
+        weights = list(ensemble_weights.values())
         
-        df_weights = pd.DataFrame(weight_data)
-        st.dataframe(df_weights, use_container_width=True)
+        if models and weights:
+            fig_weights = go.Figure()
+            
+            fig_weights.add_trace(go.Bar(
+                x=[m.replace('_', ' ').title() for m in models],
+                y=weights,
+                marker_color='lightblue',
+                text=[f'{w:.3f}' for w in weights],
+                textposition='auto'
+            ))
+            
+            fig_weights.update_layout(
+                title="Ensemble Model Weights",
+                xaxis_title="Models",
+                yaxis_title="Weight",
+                template="plotly_white",
+                height=400
+            )
+            
+            st.plotly_chart(fig_weights, use_container_width=True)
+            
+            # Weights table
+            weight_data = []
+            for model, weight in ensemble_weights.items():
+                influence = "High" if weight > 0.2 else "Medium" if weight > 0.1 else "Low"
+                weight_data.append({
+                    'Model': model.replace('_', ' ').title(),
+                    'Weight': f"{weight:.3f}",
+                    'Percentage': f"{weight*100:.1f}%",
+                    'Influence': influence
+                })
+            
+            df_weights = pd.DataFrame(weight_data)
+            st.dataframe(df_weights, use_container_width=True)
+    
+    # Fold-by-fold analysis
+    if detailed_results:
+        st.markdown("#### 📊 Fold-by-Fold Analysis")
+        
+        model_options = list(detailed_results.keys())
+        if model_options:
+            fold_analysis_model = st.selectbox(
+                "Select Model for Detailed Fold Analysis",
+                options=model_options,
+                format_func=lambda x: x.replace('_', ' ').title(),
+                key="fold_analysis_model_select"
+            )
+            
+            if fold_analysis_model in detailed_results:
+                fold_results = detailed_results[fold_analysis_model].get('fold_results', [])
+                
+                if fold_results:
+                    fold_data = []
+                    for fold in fold_results:
+                        fold_data.append({
+                            'Fold': fold.get('fold', 0) + 1,
+                            'Test MSE': f"{fold.get('test_mse', 0):.6f}",
+                            'Test R²': f"{fold.get('test_r2', 0):.4f}",
+                            'Train MSE': f"{fold.get('train_mse', 0):.6f}",
+                            'Train R²': f"{fold.get('train_r2', 0):.4f}",
+                            'Train Size': fold.get('train_size', 0),
+                            'Test Size': fold.get('test_size', 0)
+                        })
+                    
+                    df_folds = pd.DataFrame(fold_data)
+                    st.dataframe(df_folds, use_container_width=True)
+                    
+                    # Performance variation chart
+                    test_mse_values = [fold.get('test_mse', 0) for fold in fold_results]
+                    fold_numbers = [f"Fold {i+1}" for i in range(len(test_mse_values))]
+                    
+                    if test_mse_values and any(val > 0 for val in test_mse_values):
+                        fig_folds = go.Figure()
+                        
+                        fig_folds.add_trace(go.Scatter(
+                            x=fold_numbers,
+                            y=test_mse_values,
+                            mode='lines+markers',
+                            name='Test MSE',
+                            line=dict(color='blue', width=2),
+                            marker=dict(size=8)
+                        ))
+                        
+                        # Add mean line
+                        mean_mse = np.mean(test_mse_values)
+                        fig_folds.add_hline(
+                            y=mean_mse, 
+                            line_dash="dash", 
+                            line_color="red",
+                            annotation_text=f"Mean: {mean_mse:.6f}"
+                        )
+                        
+                        fig_folds.update_layout(
+                            title=f"Cross-Validation Performance: {fold_analysis_model.replace('_', ' ').title()}",
+                            xaxis_title="Fold",
+                            yaxis_title="Test MSE",
+                            template="plotly_white",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_folds, use_container_width=True)
+                else:
+                    st.warning("No fold results available for the selected model")
+    
+    # Technical details
+    with st.expander("🔧 Technical Details", expanded=False):
+        st.markdown(f"**CV Method:** {cv_method}")
+        st.markdown(f"**Analysis Timestamp:** {timestamp}")
+        
+        if 'data_points_cv' in cv_results:
+            st.markdown(f"**Total Data Points:** {cv_results['data_points_cv']:,}")
+        
+        if 'sequence_length' in cv_results:
+            st.markdown(f"**Sequence Length:** {cv_results['sequence_length']}")
+        
+        if 'feature_count_cv' in cv_results:
+            st.markdown(f"**Feature Count:** {cv_results['feature_count_cv']}")
+        
+        if cv_results.get('simulated', False):
+            st.warning("⚠️ This is simulated cross-validation data for demonstration.")
+        else:
+            st.success("✅ This represents actual cross-validation results from the backend.")
+        
+        # Additional metadata
+        if 'master_key_analysis' in cv_results:
+            st.info("🔑 Master Key Analysis - Full cross-validation capabilities enabled")
+        
+        if 'models_evaluated' in cv_results:
+            models_list = cv_results['models_evaluated']
+            st.markdown(f"**Models Evaluated:** {', '.join([m.replace('_', ' ').title() for m in models_list])}")
 
 
 def display_enhanced_risk_tab(prediction: Dict):
@@ -3944,21 +6151,23 @@ def display_drift_detection_tab(prediction: Dict):
 
 
 def display_enhanced_trading_plan_tab(prediction: Dict):
-    """Enhanced trading plan with risk management"""
-    st.subheader("📋 Comprehensive Trading Plan")
+    """Advanced comprehensive trading plan with professional-grade features"""
+    st.subheader("📋 Professional Trading Plan & Risk Management")
     
     current_price = prediction.get('current_price', 0)
     predicted_price = prediction.get('predicted_price', 0)
     ticker = prediction.get('ticker', '')
     confidence = prediction.get('confidence', 0)
+    asset_type = get_asset_type(ticker)
     
-    # Trading direction and setup
+    # === TRADE ANALYSIS & SETUP ===
+    st.markdown("### 🎯 Trade Analysis & Setup")
+    
     is_bullish = predicted_price > current_price
     price_change_pct = ((predicted_price - current_price) / current_price) * 100
     
-    st.markdown("#### 🎯 Trade Setup")
-    
-    setup_cols = st.columns(3)
+    # Enhanced setup with market context
+    setup_cols = st.columns(4)
     
     with setup_cols[0]:
         direction = "🟢 BULLISH" if is_bullish else "🔴 BEARISH"
@@ -3970,166 +6179,436 @@ def display_enhanced_trading_plan_tab(prediction: Dict):
         
     with setup_cols[2]:
         confidence_level = "High" if confidence > 80 else "Medium" if confidence > 60 else "Low"
-        st.markdown(f"**Confidence:** {confidence_level} ({confidence:.1f}%)")
+        confidence_color = "green" if confidence > 80 else "orange" if confidence > 60 else "red"
+        st.markdown(f"**AI Confidence:** <span style='color:{confidence_color}'>{confidence_level} ({confidence:.1f}%)</span>", unsafe_allow_html=True)
+        
+    with setup_cols[3]:
+        volatility_estimate = abs(price_change_pct) * 2  # Simplified volatility proxy
+        vol_level = "High" if volatility_estimate > 6 else "Medium" if volatility_estimate > 3 else "Low"
+        st.markdown(f"**Volatility:** {vol_level}")
     
-    # Calculate dynamic trading levels
-    asset_type = get_asset_type(ticker)
+    # === ADVANCED RISK PARAMETERS ===
+    st.markdown("### ⚙️ Advanced Risk Parameters")
     
-    # Asset-specific risk parameters
-    risk_params = {
-        'crypto': {'target1': 0.02, 'target2': 0.04, 'stop_loss': 0.015},
-        'forex': {'target1': 0.008, 'target2': 0.015, 'stop_loss': 0.006},
-        'commodity': {'target1': 0.015, 'target2': 0.03, 'stop_loss': 0.01},
-        'index': {'target1': 0.012, 'target2': 0.025, 'stop_loss': 0.008},
-        'stock': {'target1': 0.018, 'target2': 0.035, 'stop_loss': 0.012}
-    }
+    risk_cols = st.columns(3)
     
-    params = risk_params.get(asset_type, risk_params['stock'])
+    with risk_cols[0]:
+        # Dynamic risk based on asset type and market conditions
+        base_risk_params = {
+            'crypto': {'stop_loss': (0.015, 0.04), 'target_multiplier': (1.5, 3.0)},
+            'forex': {'stop_loss': (0.005, 0.015), 'target_multiplier': (2.0, 4.0)},
+            'commodity': {'stop_loss': (0.01, 0.025), 'target_multiplier': (1.8, 3.5)},
+            'index': {'stop_loss': (0.008, 0.02), 'target_multiplier': (2.0, 3.8)},
+            'stock': {'stop_loss': (0.012, 0.03), 'target_multiplier': (1.8, 3.2)}
+        }
+        
+        params = base_risk_params.get(asset_type, base_risk_params['stock'])
+        
+        stop_loss_pct = st.slider(
+            "Stop Loss (%)",
+            min_value=params['stop_loss'][0] * 100,
+            max_value=params['stop_loss'][1] * 100,
+            value=params['stop_loss'][0] * 150,  # Default to middle-low range
+            step=0.1,
+            help="Maximum acceptable loss per trade"
+        ) / 100
     
-    # Adjust based on confidence and expected move
-    confidence_multiplier = 0.7 + (confidence / 100) * 0.6  # 0.7 to 1.3
-    move_multiplier = min(2.0, max(0.5, abs(price_change_pct) / 2.0))
+    with risk_cols[1]:
+        target_multiplier = st.slider(
+            "Risk/Reward Ratio",
+            min_value=params['target_multiplier'][0],
+            max_value=params['target_multiplier'][1],
+            value=(params['target_multiplier'][0] + params['target_multiplier'][1]) / 2,
+            step=0.1,
+            help="Target profit vs stop loss ratio"
+        )
     
-    adjusted_params = {
-        'target1': params['target1'] * confidence_multiplier * move_multiplier,
-        'target2': params['target2'] * confidence_multiplier * move_multiplier,
-        'stop_loss': params['stop_loss']  # Keep stop loss conservative
-    }
+    with risk_cols[2]:
+        position_sizing_method = st.selectbox(
+            "Position Sizing Method",
+            options=["Fixed %", "Kelly Criterion", "Volatility Adjusted", "ATR Based"],
+            help="Method for calculating position size"
+        )
     
-    # Calculate actual levels
+    # === DYNAMIC PRICE LEVELS CALCULATION ===
+    # Confidence and volatility adjustments
+    confidence_multiplier = 0.8 + (confidence / 100) * 0.4  # 0.8 to 1.2
+    volatility_adjustment = min(2.0, max(0.6, volatility_estimate / 3.0))
+    
+    # Calculate sophisticated price levels
     if is_bullish:
         entry_price = current_price
-        target1 = current_price * (1 + adjusted_params['target1'])
-        target2 = current_price * (1 + adjusted_params['target2'])
-        stop_loss = current_price * (1 - adjusted_params['stop_loss'])
-        strategy = "BUY (Long Position)"
+        target1_distance = stop_loss_pct * target_multiplier * confidence_multiplier
+        target2_distance = target1_distance * 1.6  # Golden ratio extension
+        target3_distance = target1_distance * 2.618  # Fibonacci extension
+        
+        target1 = current_price * (1 + target1_distance)
+        target2 = current_price * (1 + target2_distance)
+        target3 = current_price * (1 + target3_distance)
+        stop_loss = current_price * (1 - stop_loss_pct)
+        
+        strategy_type = "LONG POSITION"
     else:
         entry_price = current_price
-        target1 = current_price * (1 - adjusted_params['target1'])
-        target2 = current_price * (1 - adjusted_params['target2'])
-        stop_loss = current_price * (1 + adjusted_params['stop_loss'])
-        strategy = "SELL (Short Position)"
+        target1_distance = stop_loss_pct * target_multiplier * confidence_multiplier
+        target2_distance = target1_distance * 1.6
+        target3_distance = target1_distance * 2.618
+        
+        target1 = current_price * (1 - target1_distance)
+        target2 = current_price * (1 - target2_distance)
+        target3 = current_price * (1 - target3_distance)
+        stop_loss = current_price * (1 + stop_loss_pct)
+        
+        strategy_type = "SHORT POSITION"
     
-    # Trading levels display
-    st.markdown("#### 💰 Price Levels")
+    # === ENHANCED PRICE LEVELS DISPLAY ===
+    st.markdown("### 💰 Dynamic Price Levels")
     
-    levels_cols = st.columns(4)
+    levels_cols = st.columns(5)
     
     with levels_cols[0]:
         st.metric("Entry Price", f"${entry_price:.4f}", help="Recommended entry point")
     
     with levels_cols[1]:
         target1_change = ((target1 - entry_price) / entry_price) * 100
-        st.metric("Target 1", f"${target1:.4f}", f"{target1_change:+.2f}%")
+        st.metric("Target 1 (Quick)", f"${target1:.4f}", f"{target1_change:+.2f}%")
     
     with levels_cols[2]:
         target2_change = ((target2 - entry_price) / entry_price) * 100
-        st.metric("Target 2", f"${target2:.4f}", f"{target2_change:+.2f}%")
+        st.metric("Target 2 (Main)", f"${target2:.4f}", f"{target2_change:+.2f}%")
     
     with levels_cols[3]:
+        target3_change = ((target3 - entry_price) / entry_price) * 100
+        st.metric("Target 3 (Extended)", f"${target3:.4f}", f"{target3_change:+.2f}%")
+    
+    with levels_cols[4]:
         stop_change = ((stop_loss - entry_price) / entry_price) * 100
         st.metric("Stop Loss", f"${stop_loss:.4f}", f"{stop_change:+.2f}%")
     
-    # Risk/Reward analysis
-    st.markdown("#### ⚖️ Risk/Reward Analysis")
+    # === ADVANCED RISK/REWARD ANALYSIS ===
+    st.markdown("### ⚖️ Advanced Risk/Reward Analysis")
     
     risk_amount = abs(entry_price - stop_loss)
     reward1_amount = abs(target1 - entry_price)
     reward2_amount = abs(target2 - entry_price)
+    reward3_amount = abs(target3 - entry_price)
     
     rr1 = reward1_amount / risk_amount if risk_amount > 0 else 0
     rr2 = reward2_amount / risk_amount if risk_amount > 0 else 0
+    rr3 = reward3_amount / risk_amount if risk_amount > 0 else 0
     
-    risk_cols = st.columns(3)
+    risk_reward_cols = st.columns(4)
     
-    with risk_cols[0]:
-        st.metric("Risk Amount", f"${risk_amount:.4f}", help="Maximum loss per share")
+    with risk_reward_cols[0]:
+        st.metric("Risk Per Share", f"${risk_amount:.4f}", help="Maximum loss per share")
     
-    with risk_cols[1]:
-        rr1_color = "normal" if rr1 >= 2 else "inverse"
-        st.metric("R/R Ratio (T1)", f"{rr1:.2f}", delta_color=rr1_color, help="Risk/Reward for Target 1")
+    with risk_reward_cols[1]:
+        rr1_color = "normal" if rr1 >= 1.5 else "inverse"
+        st.metric("R/R Ratio T1", f"{rr1:.2f}", delta_color=rr1_color)
     
-    with risk_cols[2]:
-        rr2_color = "normal" if rr2 >= 3 else "inverse"
-        st.metric("R/R Ratio (T2)", f"{rr2:.2f}", delta_color=rr2_color, help="Risk/Reward for Target 2")
+    with risk_reward_cols[2]:
+        rr2_color = "normal" if rr2 >= 2.5 else "inverse"
+        st.metric("R/R Ratio T2", f"{rr2:.2f}", delta_color=rr2_color)
     
-    # Position sizing
-    st.markdown("#### 📊 Position Sizing")
+    with risk_reward_cols[3]:
+        rr3_color = "normal" if rr3 >= 3.5 else "inverse"
+        st.metric("R/R Ratio T3", f"{rr3:.2f}", delta_color=rr3_color)
     
-    account_balance = st.number_input(
-        "Account Balance ($)",
-        min_value=1000,
-        max_value=1000000,
-        value=10000,
-        step=1000,
-        help="Enter your account balance for position sizing calculation"
-    )
+    # === SOPHISTICATED POSITION SIZING ===
+    st.markdown("### 📊 Advanced Position Sizing")
     
-    risk_per_trade = st.slider(
-        "Risk per Trade (%)",
-        min_value=0.5,
-        max_value=5.0,
-        value=2.0,
-        step=0.1,
-        help="Percentage of account to risk per trade"
-    ) / 100
+    pos_cols = st.columns(3)
     
-    # Calculate position size
-    max_risk_amount = account_balance * risk_per_trade
-    shares = int(max_risk_amount / risk_amount) if risk_amount > 0 else 0
-    position_value = shares * entry_price
+    with pos_cols[0]:
+        account_balance = st.number_input(
+            "Account Balance ($)",
+            min_value=1000,
+            max_value=10000000,
+            value=50000,
+            step=5000,
+            help="Enter your total trading account balance"
+        )
     
-    position_cols = st.columns(4)
+    with pos_cols[1]:
+        max_risk_per_trade = st.slider(
+            "Max Risk per Trade (%)",
+            min_value=0.5,
+            max_value=5.0,
+            value=1.5,
+            step=0.1,
+            help="Maximum percentage of account to risk"
+        ) / 100
     
-    with position_cols[0]:
-        st.metric("Max Risk ($)", f"${max_risk_amount:.2f}")
+    with pos_cols[2]:
+        correlation_adjustment = st.slider(
+            "Portfolio Correlation Adjustment",
+            min_value=0.5,
+            max_value=1.5,
+            value=1.0,
+            step=0.1,
+            help="Adjust for existing position correlations"
+        )
     
-    with position_cols[1]:
-        st.metric("Shares/Units", f"{shares:,}")
+    # Calculate sophisticated position sizes
+    max_risk_amount = account_balance * max_risk_per_trade * correlation_adjustment
     
-    with position_cols[2]:
+    # Different position sizing methods
+    if position_sizing_method == "Fixed %":
+        position_size = max_risk_amount / risk_amount if risk_amount > 0 else 0
+    elif position_sizing_method == "Kelly Criterion":
+        # Simplified Kelly criterion
+        win_probability = confidence / 100
+        avg_win_loss_ratio = rr2  # Use main target R/R
+        kelly_fraction = win_probability - ((1 - win_probability) / avg_win_loss_ratio)
+        kelly_fraction = max(0, min(kelly_fraction * 0.25, max_risk_per_trade))  # Conservative Kelly
+        position_size = (account_balance * kelly_fraction) / current_price
+    elif position_sizing_method == "Volatility Adjusted":
+        volatility_factor = 1.0 / max(0.5, volatility_adjustment)
+        adjusted_risk = max_risk_amount * volatility_factor
+        position_size = adjusted_risk / risk_amount if risk_amount > 0 else 0
+    else:  # ATR Based
+        # Simplified ATR-based sizing
+        atr_proxy = current_price * (volatility_estimate / 100)
+        atr_multiplier = 2.0  # Standard ATR multiplier
+        atr_risk = atr_proxy * atr_multiplier
+        position_size = max_risk_amount / atr_risk if atr_risk > 0 else 0
+    
+    position_size = max(0, int(position_size))
+    position_value = position_size * entry_price
+    
+    # Position sizing results
+    sizing_result_cols = st.columns(4)
+    
+    with sizing_result_cols[0]:
+        st.metric("Position Size", f"{position_size:,} shares")
+    
+    with sizing_result_cols[1]:
         st.metric("Position Value", f"${position_value:,.2f}")
     
-    with position_cols[3]:
-        portfolio_pct = (position_value / account_balance) * 100 if account_balance > 0 else 0
-        st.metric("Portfolio %", f"{portfolio_pct:.1f}%")
+    with sizing_result_cols[2]:
+        portfolio_allocation = (position_value / account_balance) * 100 if account_balance > 0 else 0
+        st.metric("Portfolio Allocation", f"{portfolio_allocation:.2f}%")
     
-    # Execution plan
-    st.markdown("#### 🎯 Execution Strategy")
+    with sizing_result_cols[3]:
+        max_potential_loss = position_size * risk_amount
+        st.metric("Max Potential Loss", f"${max_potential_loss:.2f}")
     
-    execution_plan = f"""
-    **{strategy}**
+    # === EXECUTION STRATEGY ===
+    st.markdown("### 🎯 Professional Execution Strategy")
     
-    📋 **Entry Plan:**
-    • Enter at current market price: ${entry_price:.4f}
-    • Or use limit order at: ${entry_price * 0.999:.4f} (0.1% below market)
-    • Position size: {shares:,} shares (${position_value:,.2f})
+    execution_tabs = st.tabs(["📋 Entry Strategy", "🎯 Exit Strategy", "⚡ Risk Management", "📈 Trade Management"])
     
-    🎯 **Exit Strategy:**
-    • Take 50% profit at Target 1: ${target1:.4f} (+{abs(target1_change):.2f}%)
-    • Take remaining 50% at Target 2: ${target2:.4f} (+{abs(target2_change):.2f}%)
-    • Stop loss: ${stop_loss:.4f} ({stop_change:+.2f}%)
+    with execution_tabs[0]:
+        st.markdown("#### 🚪 Entry Strategy")
+        
+        entry_methods = st.multiselect(
+            "Entry Methods",
+            options=["Market Order", "Limit Order", "Stop Limit", "Scaled Entry", "TWAP Entry"],
+            default=["Limit Order"],
+            help="Select preferred entry methods"
+        )
+        
+        if "Limit Order" in entry_methods:
+            limit_discount = st.slider("Limit Order Discount (%)", 0.0, 1.0, 0.2, 0.1)
+            limit_price = entry_price * (1 - limit_discount/100)
+            st.info(f"💡 Limit Order Price: ${limit_price:.4f}")
+        
+        if "Scaled Entry" in entry_methods:
+            scale_levels = st.slider("Scale Entry Levels", 2, 5, 3)
+            scale_range = st.slider("Scale Range (%)", 0.5, 3.0, 1.5)
+            st.info(f"📊 Scale into {scale_levels} levels over {scale_range}% range")
+        
+        # Market timing considerations
+        st.markdown("**⏰ Optimal Timing Considerations:**")
+        timing_factors = [
+            "🌅 Avoid first 30 minutes after market open",
+            "🕐 Best execution typically 10:00-11:30 AM and 2:00-3:30 PM",
+            "📊 Monitor volume - enter on above-average volume",
+            "🗞️ Check for scheduled news/earnings that could impact price",
+            "📈 Confirm trend direction on higher timeframes"
+        ]
+        
+        for factor in timing_factors:
+            st.markdown(f"  • {factor}")
     
-    ⏰ **Time Horizon:**
-    • Expected holding period: 1-5 days
-    • Review position daily
-    • Adjust stops to breakeven after Target 1 hit
+    with execution_tabs[1]:
+        st.markdown("#### 🏃 Exit Strategy")
+        
+        exit_plan = f"""
+        **🎯 Systematic Exit Plan:**
+        
+        **Target 1 (Quick Take): ${target1:.4f}** ⚡
+        • Take 30% of position
+        • Move stop loss to breakeven
+        • Expected timeframe: 1-3 days
+        
+        **Target 2 (Main Target): ${target2:.4f}** 🎯
+        • Take 50% of remaining position (35% total)
+        • Trail stop loss to Target 1 level
+        • Expected timeframe: 3-7 days
+        
+        **Target 3 (Runner): ${target3:.4f}** 🚀
+        • Hold remaining 35% of position
+        • Trail stop with 50% of recent swing range
+        • Expected timeframe: 1-3 weeks
+        
+        **🛡️ Stop Loss Management:**
+        • Initial stop: ${stop_loss:.4f}
+        • After T1: Move to breakeven
+        • After T2: Trail at T1 level
+        • Final trail: 50% of recent swing high/low
+        """
+        
+        st.code(exit_plan)
+        
+        # Advanced exit options
+        advanced_exit = st.checkbox("Enable Advanced Exit Rules")
+        if advanced_exit:
+            st.markdown("**🔄 Advanced Exit Conditions:**")
+            
+            exit_conditions = st.multiselect(
+                "Additional Exit Triggers",
+                options=[
+                    "RSI Divergence",
+                    "Volume Climax",
+                    "Trend Line Break",
+                    "Moving Average Recross",
+                    "Time-based Exit",
+                    "Correlation Breakdown"
+                ]
+            )
+            
+            if "Time-based Exit" in exit_conditions:
+                max_hold_days = st.number_input("Max Hold Period (days)", 1, 60, 14)
+                st.info(f"⏰ Force exit after {max_hold_days} days regardless of P&L")
     
-    ⚠️ **Risk Management:**
-    • Maximum loss: ${max_risk_amount:.2f} ({risk_per_trade*100:.1f}% of account)
-    • Risk/Reward ratios: {rr1:.2f} and {rr2:.2f}
-    • Asset-specific considerations: {asset_type} volatility patterns
-    """
+    with execution_tabs[2]:
+        st.markdown("#### 🛡️ Risk Management Protocols")
+        
+        risk_protocols = [
+            "🚨 **Never risk more than planned** - Stick to predetermined position size",
+            "📊 **Daily Loss Limit** - Stop trading if daily loss exceeds 3% of account",
+            "📈 **Position Correlation** - Limit correlated positions to 20% of portfolio",
+            "⏰ **Time Diversification** - Don't enter all positions simultaneously",
+            "🔄 **Regular Review** - Assess and adjust risk parameters weekly",
+            "📱 **Alert Systems** - Set price alerts for all key levels",
+            "🎯 **Profit Protection** - Lock in profits systematically at targets"
+        ]
+        
+        st.markdown("**🔐 Mandatory Risk Protocols:**")
+        for protocol in risk_protocols:
+            st.markdown(f"  • {protocol}")
+        
+        # Risk scenario analysis
+        st.markdown("**📊 Scenario Analysis:**")
+        
+        scenario_cols = st.columns(3)
+        
+        with scenario_cols[0]:
+            st.markdown("**🟢 Best Case (+T3)**")
+            best_case_profit = position_size * reward3_amount
+            best_case_return = (best_case_profit / position_value) * 100
+            st.metric("Profit", f"${best_case_profit:.2f}")
+            st.metric("Return", f"{best_case_return:.1f}%")
+        
+        with scenario_cols[1]:
+            st.markdown("**🟡 Target Case (+T2)**")
+            target_case_profit = position_size * reward2_amount
+            target_case_return = (target_case_profit / position_value) * 100
+            st.metric("Profit", f"${target_case_profit:.2f}")
+            st.metric("Return", f"{target_case_return:.1f}%")
+        
+        with scenario_cols[2]:
+            st.markdown("**🔴 Worst Case (Stop)**")
+            worst_case_loss = position_size * risk_amount
+            worst_case_return = (worst_case_loss / position_value) * -100
+            st.metric("Loss", f"-${worst_case_loss:.2f}")
+            st.metric("Return", f"{worst_case_return:.1f}%")
     
-    st.code(execution_plan)
+    with execution_tabs[3]:
+        st.markdown("#### 📈 Active Trade Management")
+        
+        st.markdown("**🔄 Dynamic Management Rules:**")
+        
+        management_rules = [
+            "📊 **Daily Review**: Check position against plan every trading day",
+            "📈 **Trend Confirmation**: Monitor higher timeframe trend alignment",
+            "📰 **News Monitoring**: Watch for fundamental changes affecting the asset",
+            "🎯 **Target Adjustment**: Modify targets based on market structure changes",
+            "⚡ **Momentum Assessment**: Adjust trail stops based on price momentum",
+            "📊 **Volume Analysis**: Confirm moves with volume participation",
+            "🔄 **Correlation Monitoring**: Watch for breakdown in expected correlations"
+        ]
+        
+        for rule in management_rules:
+            st.markdown(f"  • {rule}")
+        
+        # Trade journal template
+        st.markdown("**📝 Trade Journal Template:**")
+        
+        journal_template = f"""
+        **Trade Setup - {ticker}**
+        Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        Direction: {strategy_type}
+        Entry: ${entry_price:.4f}
+        Position Size: {position_size:,} shares
+        
+        **Rationale:**
+        • AI Prediction: ${predicted_price:.4f} ({price_change_pct:+.2f}%)
+        • Confidence Level: {confidence:.1f}%
+        • Market Context: {asset_type} - {vol_level} volatility expected
+        
+        **Risk Management:**
+        • Stop Loss: ${stop_loss:.4f} ({stop_change:+.2f}%)
+        • Max Risk: ${max_potential_loss:.2f}
+        • R/R Ratios: {rr1:.1f} | {rr2:.1f} | {rr3:.1f}
+        
+        **Targets:**
+        • T1: ${target1:.4f} (30% position)
+        • T2: ${target2:.4f} (50% remaining)  
+        • T3: ${target3:.4f} (20% runner)
+        
+        **Notes:**
+        
+        **Exit Notes:**
+        
+        **Lessons Learned:**
+        
+        """
+        
+        st.text_area("Trade Journal Entry", journal_template, height=300)
     
-    # Market conditions warning
-    if confidence < 60:
-        st.warning("⚠️ **LOW CONFIDENCE WARNING**: Consider reducing position size or waiting for better setup")
+    # === FINAL EXECUTION CHECKLIST ===
+    st.markdown("### ✅ Pre-Execution Checklist")
     
-    if abs(price_change_pct) > 5:
-        st.warning("⚠️ **LARGE MOVE WARNING**: Prediction shows unusually large expected move - exercise caution")
-
+    checklist_items = [
+        "Confirm account balance and available buying power",
+        "Verify position size calculations and risk limits",
+        "Set all stop loss and target orders in advance", 
+        "Check for upcoming news/earnings announcements",
+        "Confirm market hours and liquidity conditions",
+        "Review correlation with existing positions",
+        "Document trade rationale in journal",
+        "Set price alerts for key levels",
+        "Prepare contingency plans for gap moves",
+        "Double-check all order details before submission"
+    ]
+    
+    checklist_cols = st.columns(2)
+    
+    for i, item in enumerate(checklist_items):
+        col_idx = i % 2
+        with checklist_cols[col_idx]:
+            st.checkbox(f"{item}", key=f"checklist_{i}")
+    
+    # Final warnings and disclaimers
+    if confidence < 60 or abs(price_change_pct) > 8:
+        st.warning("⚠️ **HIGH RISK CONDITIONS DETECTED** - Consider reducing position size or waiting for better setup")
+    
+    if portfolio_allocation > 10:
+        st.error("🚨 **POSITION SIZE WARNING** - Position exceeds 10% of portfolio. Consider reducing size.")
+    
+    st.info("💡 **Remember**: This plan is based on AI analysis and should be combined with your own market analysis and risk tolerance. Always trade responsibly.")
 
 def display_basic_analysis_tab(prediction: Dict):
     """Basic analysis for free tier users"""
@@ -4229,14 +6708,13 @@ def display_basic_analysis_tab(prediction: Dict):
 
 
 def create_advanced_analytics_section():
-    pass
     """Advanced analytics section for premium users"""
     st.header("📊 Advanced Analytics Suite")
     
     ticker = st.session_state.selected_ticker
     
-    # Analytics controls
-    analytics_cols = st.columns(4)
+    # Analytics controls - FIXED: Removed explain_button
+    analytics_cols = st.columns(3)
     
     with analytics_cols[0]:
         regime_button = st.button("🔍 Analyze Market Regime", help="Detect current market regime")
@@ -4245,12 +6723,9 @@ def create_advanced_analytics_section():
         drift_button = st.button("🚨 Check Model Drift", help="Detect model performance drift")
     
     with analytics_cols[2]:
-        explain_button = st.button("🔍 Explain Models", help="Generate model explanations")
-    
-    with analytics_cols[3]:
         alt_data_button = st.button("🌐 Fetch Alt Data", help="Get alternative data sources")
     
-    # Handle analytics requests
+    # Handle analytics requests - FIXED: Removed explain_button handling
     if regime_button:
         with st.spinner("🔍 Analyzing market regime..."):
             regime_results = run_regime_analysis(ticker)
@@ -4265,12 +6740,7 @@ def create_advanced_analytics_section():
                 st.session_state.drift_detection_results = drift_results
                 st.success("✅ Model drift detection completed!")
     
-    if explain_button:
-        with st.spinner("🔍 Generating model explanations..."):
-            explanation_results = run_model_explanation(ticker)
-            if explanation_results:
-                st.session_state.model_explanations = explanation_results
-                st.success("✅ Model explanations generated!")
+    # REMOVED: The explain_button conditional block that was causing the error
     
     if alt_data_button:
         with st.spinner("🌐 Fetching alternative data..."):
@@ -5425,6 +7895,134 @@ def generate_simulated_cv_results(ticker: str, models: List[str]) -> Dict:
         'simulated': True,
         'timestamp': datetime.now().isoformat()
     }
+    
+    
+def create_mt5_integration_tab():
+    """Create MT5 integration tab in the main app"""
+    st.header("📈 MetaTrader 5 Integration")
+    
+    # Connection setup
+    st.markdown("### 🔗 MT5 Connection Setup")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        account = st.number_input("MT5 Account Number", value=0, step=1)
+        password = st.text_input("Password", type="password")
+    
+    with col2:
+        server = st.text_input("Server", value="MetaQuotes-Demo")
+        mt5_path = st.text_input("MT5 Path (optional)", help="Leave empty for default")
+    
+    # Auto trading settings
+    st.markdown("### ⚙️ Auto Trading Settings")
+    
+    settings_col1, settings_col2 = st.columns(2)
+    
+    with settings_col1:
+        auto_trading_enabled = st.checkbox("Enable Auto Trading", value=False)
+        min_confidence = st.slider("Minimum Confidence (%)", 0, 100, 70)
+    
+    with settings_col2:
+        max_risk_per_trade = st.slider("Max Risk per Trade (%)", 0.1, 5.0, 2.0, 0.1)
+        max_daily_trades = st.number_input("Max Daily Trades", 1, 50, 10)
+    
+    # Connection button
+    if st.button("🚀 Connect to MT5", type="primary"):
+        if account > 0 and password:
+            with st.spinner("Connecting to MT5..."):
+                mt5_integration = MT5Integration()
+                
+                success = mt5_integration.setup_mt5_connection(
+                    account=account,
+                    password=password,
+                    server=server,
+                    path=mt5_path if mt5_path else None
+                )
+                
+                if success:
+                    st.success("✅ Successfully connected to MT5!")
+                    st.session_state.mt5_integration = mt5_integration
+                    st.session_state.mt5_connected = True
+                else:
+                    st.error("❌ Failed to connect to MT5")
+        else:
+            st.error("Please enter account number and password")
+    
+    # MT5 Status and Performance
+    if st.session_state.get('mt5_connected', False):
+        display_mt5_performance()
+
+def display_mt5_performance():
+    """Display MT5 performance metrics"""
+    st.markdown("---")
+    st.markdown("### 📊 MT5 Performance Dashboard")
+    
+    mt5_trader = st.session_state.get('mt5_trader')
+    if not mt5_trader:
+        st.warning("MT5 trader not initialized")
+        return
+    
+    # Get performance report
+    performance = mt5_trader.get_performance_report()
+    
+    # Performance metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Account Balance", f"${performance.get('account_balance', 0):,.2f}")
+    
+    with col2:
+        st.metric("Account Equity", f"${performance.get('account_equity', 0):,.2f}")
+    
+    with col3:
+        st.metric("Total Trades", performance.get('total_trades', 0))
+    
+    with col4:
+        st.metric("Win Rate", f"{performance.get('win_rate', 0):.1f}%")
+    
+    # P&L metrics
+    pnl_col1, pnl_col2, pnl_col3 = st.columns(3)
+    
+    with pnl_col1:
+        total_pnl = performance.get('total_pnl', 0)
+        st.metric("Total P&L", f"${total_pnl:,.2f}", 
+                 delta_color="normal" if total_pnl >= 0 else "inverse")
+    
+    with pnl_col2:
+        daily_pnl = performance.get('daily_pnl', 0)
+        st.metric("Daily P&L", f"${daily_pnl:,.2f}",
+                 delta_color="normal" if daily_pnl >= 0 else "inverse")
+    
+    with pnl_col3:
+        st.metric("Active Positions", performance.get('active_positions', 0))
+    
+    # Control buttons
+    control_col1, control_col2, control_col3 = st.columns(3)
+    
+    with control_col1:
+        if st.button("🔄 Refresh Status"):
+            st.rerun()
+    
+    with control_col2:
+        if st.button("📤 Send Current Prediction"):
+            if st.session_state.get('current_prediction'):
+                mt5_integration = st.session_state.get('mt5_integration')
+                if mt5_integration:
+                    success = mt5_integration.send_prediction_to_mt5(
+                        st.session_state.current_prediction
+                    )
+                    if success:
+                        st.success("✅ Signal sent to MT5!")
+                    else:
+                        st.error("❌ Failed to send signal")
+    
+    with control_col3:
+        if st.button("⚠️ Close All Positions", type="secondary"):
+            if st.button("Confirm Close All", key="confirm_close"):
+                mt5_trader.close_all_positions()
+                st.success("All positions closed!")    
+    
 
 def create_professional_footer():
     """Create professional footer with system information"""
@@ -5439,8 +8037,8 @@ def create_professional_footer():
         
         # Feature count
         total_features = len([
-            "Real-time Predictions", "8 AI Models", "Cross-Validation", 
-            "SHAP Explanations", "Risk Analytics", "Market Regime Detection",
+            "Real-time Predictions", "6 AI Models", 
+            "SHAP Explanations", "Market Regime Detection",
             "Model Drift Detection", "Portfolio Optimization", "Alternative Data",
             "Advanced Backtesting", "Multi-timeframe Analysis", "Options Flow"
         ])
@@ -5560,19 +8158,101 @@ def create_sidebar(advanced_app_state):
             st.markdown("---")
             st.header("🔄 Real-time Status")
             _create_premium_realtime_status()
+            
+        # Add FTMO section at the end
+        if st.session_state.subscription_tier == 'premium':
+            st.markdown("---")
+            st.header("🏦 FTMO Quick View")
+            
+            if 'ftmo_tracker' not in st.session_state or not st.session_state.ftmo_tracker:
+                st.info("💡 Setup FTMO tracker in the FTMO Dashboard tab")
+            else:
+                tracker = st.session_state.ftmo_tracker
+                summary = tracker.get_ftmo_summary()
+                
+                # Quick metrics
+                st.metric("Account Equity", f"${summary['current_equity']:,.0f}")
+                st.metric("Daily P&L", f"${summary['daily_pnl']:,.0f}")
+                st.metric("Open Positions", summary['open_positions'])
+                
+                # Quick risk status
+                daily_risk = summary['daily_limit_used_pct']
+                total_risk = summary['total_limit_used_pct']
+                
+                if daily_risk > 80 or total_risk > 85:
+                    st.error("🚨 High Risk!")
+                elif daily_risk > 60 or total_risk > 70:
+                    st.warning("⚠️ Moderate Risk")
+                else:
+                    st.success("✅ Low Risk")   
 
 def _create_premium_sidebar(advanced_app_state):
-    """
-    Create sidebar content for premium tier.
+    """Create sidebar content for premium tier with click tracking"""
     
-    Args:
-        advanced_app_state (AdvancedAppState): The advanced app state object
-    """
-    st.success("✅ **PREMIUM ACTIVE**")
+    premium_key = st.session_state.premium_key
+    key_status = PremiumKeyManager.get_key_status(premium_key)
+    
+    if key_status['key_type'] == 'master':
+        st.success("✅ **MASTER PREMIUM ACTIVE**")
+        st.markdown("**🔑 Master Key Features:**")
+        st.markdown("• Unlimited Predictions")
+        st.markdown("• Cross-Validation Analysis")
+        st.markdown("• Model Training & Management")
+        st.markdown("• Admin Panel Access")
+        st.markdown("• All Premium Features")
+    else:
+        st.success("✅ **PREMIUM ACTIVE**")
+        clicks_remaining = key_status.get('clicks_remaining', 0)
+        clicks_total = key_status.get('clicks_total', 20)
+        clicks_used = clicks_total - clicks_remaining
+        
+        # Progress bar for clicks
+        progress = clicks_used / clicks_total if clicks_total > 0 else 1
+        st.progress(progress)
+        st.markdown(f"**Predictions Used:** {clicks_used}/{clicks_total}")
+        st.markdown(f"**Remaining:** {clicks_remaining}")
+        
+        expires = key_status.get('expires', 'Unknown')
+        st.markdown(f"**Expires:** {expires}")
+        
+        # Show upgrade path to master key
+        st.info("🔑 **Upgrade to Master Key for:**\n• Cross-Validation Analysis\n• Model Training\n• Admin Features")
+    
+    # Features list
     st.markdown("**Features Unlocked:**")
     features = st.session_state.subscription_info.get('features', [])
-    for feature in features[:8]:  # Show first 8 features
+    for feature in features[:8]:
         st.markdown(f"• {feature}")
+
+    # Model selection and training ONLY for master key users
+    if key_status['key_type'] == 'master':
+        st.markdown("---")
+        st.header("🤖 AI Model Configuration")
+        
+        available_models = advanced_app_state.get_available_models()
+        selected_models = st.multiselect(
+            "Select AI Models",
+            options=available_models,
+            default=available_models[:3],
+            help="Select which AI models to use for prediction"
+        )
+        st.session_state.selected_models = selected_models
+        
+        # Model training controls (only for master key)
+        if st.button("🔄 Train/Retrain Models", type="secondary"):
+            ticker = st.session_state.selected_ticker
+            with st.spinner("Training AI models..."):
+                trained_models, scaler, config = RealPredictionEngine._train_models_real(ticker)
+                if trained_models:
+                    st.session_state.models_trained[ticker] = trained_models
+                    st.session_state.model_configs[ticker] = config
+                    st.success(f"✅ Trained {len(trained_models)} models")
+                else:
+                    st.error("❌ Training failed")
+        
+        st.markdown("---")
+        st.markdown("🔍 **Cross-Validation**")
+        st.markdown("Available in prediction section")
     
     # Deactivate premium button
     if st.button("🔓 Deactivate Premium", key="deactivate_premium"):
@@ -5583,16 +8263,16 @@ def _create_premium_sidebar(advanced_app_state):
 
 def _create_free_tier_sidebar(advanced_app_state):
     """
-    Create sidebar content for free tier with a comprehensive disclaimer.
+    Create sidebar content for free tier with proper disclaimer handling.
     
     Args:
         advanced_app_state (AdvancedAppState): The advanced app state object
     """
-    # Use a more persistent session state approach
+    # Initialize disclaimer consent state if not exists
     if 'disclaimer_consented' not in st.session_state:
         st.session_state.disclaimer_consented = False
 
-    # Always show disclaimer if not consented
+    # Always show disclaimer if not consented - BLOCK ALL OTHER CONTENT
     if not st.session_state.disclaimer_consented:
         # Large, attention-grabbing disclaimer
         st.markdown("""
@@ -5622,78 +8302,63 @@ def _create_free_tier_sidebar(advanced_app_state):
            - YOU are solely responsible for ALL investment decisions
            - Platform is for informational purposes only
         
-        ### CONSENT REQUIRED
+        ### CONSENT REQUIRED TO PROCEED
         """)
         
-        # Consent mechanism
+        # Consent mechanism - centered and prominent
+        st.markdown("---")
+        
         consent_col1, consent_col2 = st.columns(2)
         
         with consent_col1:
-            consent = st.button(
+            if st.button(
                 "✅ I FULLY UNDERSTAND & CONSENT", 
-                key="disclaimer_consent_full", 
+                key="disclaimer_consent_sidebar", 
                 type="primary",
-                help="Confirm you've read and understand the risks"
-            )
+                help="Confirm you've read and understand all risks",
+                use_container_width=True
+            ):
+                st.session_state.disclaimer_consented = True
+                st.success("✅ Consent recorded. You may now use the platform.")
+                time.sleep(1)
+                st.rerun()
         
         with consent_col2:
-            decline = st.button(
+            if st.button(
                 "❌ I DO NOT CONSENT", 
-                key="disclaimer_decline_full", 
+                key="disclaimer_decline_sidebar", 
                 type="secondary",
-                help="Exit the platform if you do not agree to the terms"
-            )
+                help="Exit if you do not agree to the terms",
+                use_container_width=True
+            ):
+                st.error("❌ Access denied. You must consent to use the platform.")
+                st.stop()
         
-        # Handle consent
-        if consent:
-            # Directly set the consent flag
-            st.session_state.disclaimer_consented = True
-            # Clear any previous error messages
-            st.empty()
-        
-        # Handle decline
-        if decline:
-            st.error("Access denied. You must consent to use the platform.")
-            # Optionally, you could add a way to exit or redirect
-            return
-        
-        # If not consented, stop further execution
-        return
+        # CRITICAL: Stop all further execution if not consented
+        st.stop()
 
-    # Premium key activation (only shown after consent)
-    st.info("🔑 Premium Activation")
+    # Only show premium activation AFTER consent
+    st.info("ℹ️ **FREE TIER ACTIVE**")
+    usage = st.session_state.daily_usage.get('predictions', 0)
+    st.markdown(f"**Daily Usage:** {usage}/10 predictions")
     
     premium_key = st.text_input(
         "Enter Premium Key",
         type="password",
         value=st.session_state.get('premium_key', ''),
         key="sidebar_premium_key_input",
-        help="Enter predefined or external premium key"
+        help="Enter 'Prem246_357' for full access"
     )
     
     if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
-        # Validation process
-        external_validation = validate_premium_key_ext(premium_key)
+        success = advanced_app_state.update_subscription(premium_key)
         
-        # Fallback to predefined key check
-        if not external_validation['valid']:
-            external_validation = (
-                {'valid': True, 'tier': 'premium'} 
-                if premium_key == ProfessionalSubscriptionManager.PREMIUM_KEY 
-                else {'valid': False, 'tier': 'free'}
-            )
-        
-        # Subscription update
-        if external_validation['valid']:
-            success = advanced_app_state.update_subscription(premium_key)
-            if success:
-                st.success("Premium activated successfully!")
-                # Store the key for potential future use
-                st.session_state.premium_key = premium_key
-            else:
-                st.error("Invalid premium key. Please try again.")
+        if success:
+            st.success("Premium activated successfully!")
+            time.sleep(1)
+            st.rerun()
         else:
-            st.error("Invalid premium key. Please check and try again.")
+            st.error("Invalid premium key")
 
 def _create_asset_selection_sidebar():
     """
@@ -5784,9 +8449,23 @@ def _create_premium_realtime_status():
                 st.error(f"Error refreshing data: {e}")
         else:
             st.warning("Backend data manager not available")
-
+            
+            
 def create_main_content():
     """Create the main content area with tabs and sections."""
+    
+    # CHECK DISCLAIMER CONSENT BEFORE SHOWING ANY CONTENT
+    if not st.session_state.get('disclaimer_consented', False):
+        st.markdown("""
+        <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #ff6b6b, #ee5a24);
+                    color:white;border-radius:15px;margin:20px 0">
+            <h1>🚨 DISCLAIMER CONSENT REQUIRED</h1>
+            <h3>Please read and accept the risk disclaimer in the sidebar to proceed</h3>
+            <p>All features are disabled until you provide consent</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
     # Mobile and performance optimizations
     is_mobile = is_mobile_device()
     device_type = get_device_type()
@@ -5801,86 +8480,75 @@ def create_main_content():
     # Enhanced dashboard styling
     create_enhanced_dashboard_styling()
     
-    # Main content area
-    col1, col2 = st.columns([1, 4])
-    
-    with col2:
-        # Determine available tabs based on subscription and user management availability
-        if st.session_state.subscription_tier == 'premium':
-            # Check if User Management is available
-            subscription_info = st.session_state.subscription_info
-            features = subscription_info.get('features', []) if subscription_info else []
-            has_user_management = (
-                USER_MANAGEMENT_AVAILABLE and 
-                any('User' in str(feature) for feature in features)
-            )
-            
-            if has_user_management:
-                # Premium with User Management
-                main_tabs = st.tabs([
-                    "🎯 Prediction", 
-                    "📊 Analytics", 
-                    "💼 Portfolio", 
-                    "📈 Backtesting",
-                    "👥 User Management"
-                ])
-                
-                # Tab content
-                with main_tabs[0]:
-                    create_enhanced_prediction_section()
-                
-                with main_tabs[1]:
-                    create_advanced_analytics_section()
-                
-                with main_tabs[2]:
-                    create_portfolio_management_section()
-                
-                with main_tabs[3]:
-                    create_backtesting_section()
-                
-                with main_tabs[4]:
-                    if USER_MANAGEMENT_AVAILABLE:
-                        create_user_management_section()
-                    else:
-                        st.error("❌ User Management module not available")
-                        st.info("💡 Check that user_management.py is properly installed")
-                        
-            else:
-                # Premium without User Management
-                main_tabs = st.tabs([
-                    "🎯 Prediction", 
-                    "📊 Analytics", 
-                    "💼 Portfolio", 
-                    "📈 Backtesting"
-                ])
-                
-                # Tab content
-                with main_tabs[0]:
-                    create_enhanced_prediction_section()
-                with main_tabs[1]:
-                    create_advanced_analytics_section()
-                with main_tabs[2]:
-                    create_portfolio_management_section()
-                with main_tabs[3]:
-                    create_backtesting_section()
-                    
-        else:
-            # Free tier
-            main_tabs = st.tabs([
-                "🎯 Prediction", 
-                "📊 Basic Analytics"
+    # Determine available tabs based on subscription
+    if st.session_state.subscription_tier == 'premium':
+        # Check if user has master key for admin panel
+        has_master_key = st.session_state.premium_key == PremiumKeyManager.MASTER_KEY
+        
+        if has_master_key:
+            # Master key user gets admin panel, FTMO dashboard, AND MT5 integration
+            tabs = st.tabs([
+                "AI Prediction", 
+                "Advanced Analytics", 
+                "Portfolio Management", 
+                "Backtesting",
+                "FTMO Dashboard",
+                "MT5 Integration",  # ADD THIS LINE
+                "Admin Panel"
             ])
             
-            with main_tabs[0]:
+            with tabs[0]:
                 create_enhanced_prediction_section()
-            with main_tabs[1]:
-                create_basic_analytics_section()
+            with tabs[1]:
+                create_advanced_analytics_section()
+            with tabs[2]:
+                create_portfolio_management_section()
+            with tabs[3]:
+                create_backtesting_section()
+            with tabs[4]:
+                create_ftmo_dashboard()
+            with tabs[5]:
+                create_mt5_integration_tab()  # ADD THIS LINE
+            with tabs[6]:
+                create_admin_panel()
+        else:
+            # Regular premium users get FTMO dashboard and MT5 integration but no admin panel
+            tabs = st.tabs([
+                "AI Prediction", 
+                "Advanced Analytics", 
+                "Portfolio Management", 
+                "Backtesting",
+                "FTMO Dashboard",
+                "MT5 Integration"  # ADD THIS LINE
+            ])
+            
+            with tabs[0]:
+                create_enhanced_prediction_section()
+            with tabs[1]:
+                create_advanced_analytics_section()
+            with tabs[2]:
+                create_portfolio_management_section()
+            with tabs[3]:
+                create_backtesting_section()
+            with tabs[4]:
+                create_ftmo_dashboard()
+            with tabs[5]:
+                create_mt5_integration_tab()  # ADD THIS LINE
+    else:
+        # Free tier tabs remain the same (no MT5 integration for free users)
+        tabs = st.tabs([
+            "AI Prediction", 
+            "Basic Analytics"
+        ])
         
-        # Continuous real-time data updates
-        update_real_time_data()
-        
-        # Professional footer
-        create_professional_footer()
+        with tabs[0]:
+            create_enhanced_prediction_section()
+        with tabs[1]:
+            create_basic_analytics_section()
+    
+    # Update data and show footer
+    update_real_time_data()
+    create_professional_footer()
 
 def main():
     """
