@@ -21,7 +21,61 @@ import sys
 import io
 import queue
 import traceback
-import MetaTrader5 as mt5
+
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
+    # Create a mock mt5 module for compatibility
+    class MockMT5:
+        @staticmethod
+        def initialize(*args, **kwargs):
+            return False
+        
+        @staticmethod
+        def login(*args, **kwargs):
+            return False
+        
+        @staticmethod
+        def last_error():
+            return "MT5 not available"
+        
+        @staticmethod
+        def account_info():
+            return None
+        
+        @staticmethod
+        def symbol_info(symbol):
+            return None
+        
+        @staticmethod
+        def symbol_select(symbol, enable):
+            return False
+        
+        @staticmethod
+        def order_send(request):
+            return None
+        
+        @staticmethod
+        def positions_get(*args, **kwargs):
+            return None
+        
+        @staticmethod
+        def history_deals_get(*args, **kwargs):
+            return None
+        
+        # Add other MT5 constants as needed
+        TRADE_ACTION_DEAL = 1
+        ORDER_TYPE_BUY = 0
+        ORDER_TYPE_SELL = 1
+        TRADE_RETCODE_DONE = 10009
+        ORDER_TIME_GTC = 0
+        ORDER_FILLING_IOC = 1
+        POSITION_TYPE_BUY = 0
+    
+    mt5 = MockMT5()
+
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -91,6 +145,16 @@ class MT5AutoTrader:
                  path: str = None,
                  enable_auto_trading: bool = False):
         
+        # Check if MT5 is available
+        if not MT5_AVAILABLE:
+            self.logger = logging.getLogger('MT5AutoTrader')
+            self.logger.warning("MetaTrader5 not available - running in simulation mode")
+            self.mt5_available = False
+            self.connection_status = MT5ConnectionStatus.ERROR
+            return
+        
+        self.mt5_available = True
+        
         self.account = account
         self.password = password
         self.server = server
@@ -129,6 +193,10 @@ class MT5AutoTrader:
         
     def initialize_connection(self) -> bool:
         """Initialize connection to MT5"""
+        if not self.mt5_available:
+            self.logger.error("MT5 not available on this system")
+            return False
+        
         try:
             self.connection_status = MT5ConnectionStatus.CONNECTING
             self.last_connection_attempt = datetime.now()
@@ -7900,6 +7968,24 @@ def generate_simulated_cv_results(ticker: str, models: List[str]) -> Dict:
 def create_mt5_integration_tab():
     """Create MT5 integration tab in the main app"""
     st.header("📈 MetaTrader 5 Integration")
+    
+    # Check if MT5 is available
+    if not MT5_AVAILABLE:
+        st.error("⚠️ MetaTrader5 Not Available")
+        st.markdown("""
+        MetaTrader5 integration is not available in this environment.
+        
+        **Possible reasons:**
+        - Running on a non-Windows system
+        - MetaTrader5 not installed
+        - Running in a cloud environment (like Streamlit Cloud)
+        
+        **To use MT5 integration:**
+        - Run the application locally on Windows
+        - Install MetaTrader5 terminal
+        - Install the MetaTrader5 Python package: `pip install MetaTrader5`
+        """)
+        return
     
     # Connection setup
     st.markdown("### 🔗 MT5 Connection Setup")
