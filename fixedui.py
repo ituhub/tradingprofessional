@@ -21,62 +21,6 @@ import sys
 import io
 import queue
 import traceback
-
-try:
-    import MetaTrader5 as mt5
-    MT5_AVAILABLE = True
-except ImportError:
-    MT5_AVAILABLE = False
-    # Create a mock mt5 module for compatibility
-    class MockMT5:
-        @staticmethod
-        def initialize(*args, **kwargs):
-            return False
-        
-        @staticmethod
-        def login(*args, **kwargs):
-            return False
-        
-        @staticmethod
-        def last_error():
-            return "MT5 not available"
-        
-        @staticmethod
-        def account_info():
-            return None
-        
-        @staticmethod
-        def symbol_info(symbol):
-            return None
-        
-        @staticmethod
-        def symbol_select(symbol, enable):
-            return False
-        
-        @staticmethod
-        def order_send(request):
-            return None
-        
-        @staticmethod
-        def positions_get(*args, **kwargs):
-            return None
-        
-        @staticmethod
-        def history_deals_get(*args, **kwargs):
-            return None
-        
-        # Add other MT5 constants as needed
-        TRADE_ACTION_DEAL = 1
-        ORDER_TYPE_BUY = 0
-        ORDER_TYPE_SELL = 1
-        TRADE_RETCODE_DONE = 10009
-        ORDER_TIME_GTC = 0
-        ORDER_FILLING_IOC = 1
-        POSITION_TYPE_BUY = 0
-    
-    mt5 = MockMT5()
-
-from enum import Enum
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
@@ -113,455 +57,6 @@ logging.basicConfig(
 
 # Create logger instance
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TradeSignal:
-    """Trade signal from the AI app"""
-    symbol: str
-    action: str  # 'BUY', 'SELL', 'CLOSE'
-    volume: float
-    price: float
-    sl: float  # Stop Loss
-    tp: float  # Take Profit
-    confidence: float
-    timestamp: datetime
-    signal_id: str
-    comment: str = ""
-
-class MT5ConnectionStatus(Enum):
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    ERROR = "error"
-
-class MT5AutoTrader:
-    """Advanced MT5 Auto Trading System"""
-    
-    def __init__(self, 
-                 account: int,
-                 password: str,
-                 server: str,
-                 path: str = None,
-                 enable_auto_trading: bool = False):
-        
-        # Check if MT5 is available
-        if not MT5_AVAILABLE:
-            self.logger = logging.getLogger('MT5AutoTrader')
-            self.logger.warning("MetaTrader5 not available - running in simulation mode")
-            self.mt5_available = False
-            self.connection_status = MT5ConnectionStatus.ERROR
-            return
-        
-        self.mt5_available = True
-        
-        self.account = account
-        self.password = password
-        self.server = server
-        self.path = path
-        self.enable_auto_trading = enable_auto_trading
-        
-        # Connection status
-        self.connection_status = MT5ConnectionStatus.DISCONNECTED
-        self.last_connection_attempt = None
-        
-        # Trading parameters
-        self.magic_number = 123456  # Unique identifier for our EA
-        self.max_risk_per_trade = 0.02  # 2% max risk per trade
-        self.max_daily_trades = 10
-        self.min_confidence_threshold = 70.0
-        
-        # Performance tracking
-        self.trades_today = 0
-        self.total_trades = 0
-        self.winning_trades = 0
-        self.total_pnl = 0.0
-        self.daily_pnl = 0.0
-        
-        # Active positions
-        self.active_positions: Dict[str, Dict] = {}
-        
-        # Signal queue
-        self.signal_queue: List[TradeSignal] = []
-        
-        # Logging
-        self.logger = logging.getLogger('MT5AutoTrader')
-        
-        # Threading
-        self.trading_thread = None
-        self.is_running = False
-        
-    def initialize_connection(self) -> bool:
-        """Initialize connection to MT5"""
-        if not self.mt5_available:
-            self.logger.error("MT5 not available on this system")
-            return False
-        
-        try:
-            self.connection_status = MT5ConnectionStatus.CONNECTING
-            self.last_connection_attempt = datetime.now()
-            
-            # Initialize MT5
-            if not mt5.initialize(path=self.path):
-                self.logger.error(f"MT5 initialize() failed, error code: {mt5.last_error()}")
-                self.connection_status = MT5ConnectionStatus.ERROR
-                return False
-            
-            # Login to account
-            if not mt5.login(self.account, password=self.password, server=self.server):
-                self.logger.error(f"Failed to connect to account #{self.account}, error code: {mt5.last_error()}")
-                self.connection_status = MT5ConnectionStatus.ERROR
-                return False
-            
-            self.connection_status = MT5ConnectionStatus.CONNECTED
-            self.logger.info(f"Successfully connected to MT5 account: {self.account}")
-            
-            # Get account info
-            account_info = mt5.account_info()
-            if account_info:
-                self.logger.info(f"Account balance: {account_info.balance}")
-                self.logger.info(f"Account equity: {account_info.equity}")
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error initializing MT5 connection: {e}")
-            self.connection_status = MT5ConnectionStatus.ERROR
-            return False
-    
-    def start_auto_trading(self):
-        """Start the auto trading system"""
-        if not self.is_running:
-            self.is_running = True
-            self.trading_thread = threading.Thread(target=self._trading_loop, daemon=True)
-            self.trading_thread.start()
-            self.logger.info("Auto trading system started")
-    
-    def stop_auto_trading(self):
-        """Stop the auto trading system"""
-        self.is_running = False
-        if self.trading_thread:
-            self.trading_thread.join(timeout=5)
-        self.logger.info("Auto trading system stopped")
-    
-    def add_signal(self, signal: TradeSignal):
-        """Add a trading signal to the queue"""
-        if self.enable_auto_trading and signal.confidence >= self.min_confidence_threshold:
-            self.signal_queue.append(signal)
-            self.logger.info(f"Added signal: {signal.action} {signal.symbol} @ {signal.price}")
-    
-    def _trading_loop(self):
-        """Main trading loop"""
-        while self.is_running:
-            try:
-                # Check connection
-                if self.connection_status != MT5ConnectionStatus.CONNECTED:
-                    if not self.initialize_connection():
-                        time.sleep(30)  # Wait before retry
-                        continue
-                
-                # Process signals
-                self._process_signals()
-                
-                # Monitor positions
-                self._monitor_positions()
-                
-                # Update performance metrics
-                self._update_performance()
-                
-                # Sleep before next iteration
-                time.sleep(1)
-                
-            except Exception as e:
-                self.logger.error(f"Error in trading loop: {e}")
-                time.sleep(5)
-    
-    def _process_signals(self):
-        """Process trading signals from the queue"""
-        while self.signal_queue and self.trades_today < self.max_daily_trades:
-            signal = self.signal_queue.pop(0)
-            
-            try:
-                if signal.action in ['BUY', 'SELL']:
-                    self._execute_trade(signal)
-                elif signal.action == 'CLOSE':
-                    self._close_position(signal.symbol)
-                    
-            except Exception as e:
-                self.logger.error(f"Error processing signal: {e}")
-    
-    def _execute_trade(self, signal: TradeSignal) -> bool:
-        """Execute a trade based on the signal"""
-        try:
-            # Get symbol info
-            symbol_info = mt5.symbol_info(signal.symbol)
-            if not symbol_info:
-                self.logger.error(f"Symbol {signal.symbol} not found")
-                return False
-            
-            # Check if symbol is available for trading
-            if not symbol_info.visible:
-                mt5.symbol_select(signal.symbol, True)
-            
-            # Calculate position size based on risk management
-            position_size = self._calculate_position_size(signal)
-            
-            # Prepare the trade request
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": signal.symbol,
-                "volume": position_size,
-                "type": mt5.ORDER_TYPE_BUY if signal.action == 'BUY' else mt5.ORDER_TYPE_SELL,
-                "price": signal.price,
-                "sl": signal.sl,
-                "tp": signal.tp,
-                "deviation": 20,
-                "magic": self.magic_number,
-                "comment": f"AI_Signal_{signal.signal_id}",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            
-            # Send the trade request
-            result = mt5.order_send(request)
-            
-            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                self.logger.info(f"Trade executed: {signal.action} {position_size} {signal.symbol} @ {result.price}")
-                
-                # Track the position
-                self.active_positions[signal.symbol] = {
-                    'ticket': result.order,
-                    'signal': signal,
-                    'open_time': datetime.now(),
-                    'open_price': result.price,
-                    'volume': position_size
-                }
-                
-                self.trades_today += 1
-                self.total_trades += 1
-                return True
-            else:
-                self.logger.error(f"Trade failed: {result.retcode if result else 'No result'}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error executing trade: {e}")
-            return False
-    
-    def _calculate_position_size(self, signal: TradeSignal) -> float:
-        """Calculate position size based on risk management"""
-        try:
-            account_info = mt5.account_info()
-            if not account_info:
-                return 0.01  # Minimum lot size
-            
-            # Get symbol info
-            symbol_info = mt5.symbol_info(signal.symbol)
-            if not symbol_info:
-                return 0.01
-            
-            # Calculate risk amount
-            risk_amount = account_info.equity * self.max_risk_per_trade
-            
-            # Calculate stop loss distance in points
-            if signal.action == 'BUY':
-                sl_distance = abs(signal.price - signal.sl)
-            else:
-                sl_distance = abs(signal.sl - signal.price)
-            
-            if sl_distance == 0:
-                return 0.01
-            
-            # Calculate position size
-            tick_value = symbol_info.trade_tick_value
-            position_size = risk_amount / (sl_distance * tick_value)
-            
-            # Apply minimum and maximum limits
-            min_lot = symbol_info.volume_min
-            max_lot = min(symbol_info.volume_max, account_info.equity / 1000)  # Conservative max
-            
-            position_size = max(min_lot, min(position_size, max_lot))
-            
-            # Round to lot step
-            lot_step = symbol_info.volume_step
-            position_size = round(position_size / lot_step) * lot_step
-            
-            return position_size
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating position size: {e}")
-            return 0.01
-    
-    def _monitor_positions(self):
-        """Monitor active positions"""
-        try:
-            positions = mt5.positions_get()
-            if positions is None:
-                return
-            
-            current_positions = {pos.symbol: pos for pos in positions if pos.magic == self.magic_number}
-            
-            # Update active positions tracking
-            for symbol in list(self.active_positions.keys()):
-                if symbol not in current_positions:
-                    # Position was closed
-                    self._handle_position_closed(symbol)
-            
-        except Exception as e:
-            self.logger.error(f"Error monitoring positions: {e}")
-    
-    def _handle_position_closed(self, symbol: str):
-        """Handle when a position is closed"""
-        if symbol in self.active_positions:
-            position_info = self.active_positions[symbol]
-            
-            # Get deals to calculate P&L
-            deals = mt5.history_deals_get(
-                position_info['open_time'],
-                datetime.now(),
-                group=symbol
-            )
-            
-            if deals:
-                for deal in deals:
-                    if deal.magic == self.magic_number and deal.symbol == symbol:
-                        if deal.profit != 0:  # Closing deal
-                            if deal.profit > 0:
-                                self.winning_trades += 1
-                            
-                            self.total_pnl += deal.profit
-                            self.daily_pnl += deal.profit
-                            
-                            self.logger.info(f"Position closed: {symbol}, P&L: {deal.profit}")
-            
-            # Remove from active positions
-            del self.active_positions[symbol]
-    
-    def _update_performance(self):
-        """Update performance metrics"""
-        try:
-            account_info = mt5.account_info()
-            if account_info:
-                # Reset daily metrics if new day
-                current_date = datetime.now().date()
-                if not hasattr(self, 'last_update_date') or self.last_update_date != current_date:
-                    self.trades_today = 0
-                    self.daily_pnl = 0.0
-                    self.last_update_date = current_date
-                    
-        except Exception as e:
-            self.logger.error(f"Error updating performance: {e}")
-    
-    def get_performance_report(self) -> Dict:
-        """Get comprehensive performance report"""
-        try:
-            account_info = mt5.account_info()
-            
-            win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
-            
-            return {
-                'account_balance': account_info.balance if account_info else 0,
-                'account_equity': account_info.equity if account_info else 0,
-                'total_trades': self.total_trades,
-                'winning_trades': self.winning_trades,
-                'win_rate': win_rate,
-                'total_pnl': self.total_pnl,
-                'daily_pnl': self.daily_pnl,
-                'trades_today': self.trades_today,
-                'active_positions': len(self.active_positions),
-                'connection_status': self.connection_status.value,
-                'last_update': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting performance report: {e}")
-            return {}
-    
-    def close_all_positions(self):
-        """Close all open positions"""
-        try:
-            positions = mt5.positions_get()
-            if positions:
-                for position in positions:
-                    if position.magic == self.magic_number:
-                        self._close_position_by_ticket(position.ticket)
-                        
-        except Exception as e:
-            self.logger.error(f"Error closing all positions: {e}")
-    
-    def _close_position_by_ticket(self, ticket: int):
-        """Close position by ticket number"""
-        try:
-            position = mt5.positions_get(ticket=ticket)
-            if not position:
-                return False
-            
-            position = position[0]
-            
-            if position.type == mt5.POSITION_TYPE_BUY:
-                order_type = mt5.ORDER_TYPE_SELL
-            else:
-                order_type = mt5.ORDER_TYPE_BUY
-            
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": position.symbol,
-                "volume": position.volume,
-                "type": order_type,
-                "position": ticket,
-                "magic": self.magic_number,
-                "comment": "Close by AI system",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            
-            result = mt5.order_send(request)
-            return result and result.retcode == mt5.TRADE_RETCODE_DONE
-            
-        except Exception as e:
-            self.logger.error(f"Error closing position {ticket}: {e}")
-            return False
-
-# Create MT5 performance display in MT5
-class MT5PerformanceDisplay:
-    """Display AI app performance in MT5 as custom indicators"""
-    
-    def __init__(self, mt5_trader: MT5AutoTrader):
-        self.mt5_trader = mt5_trader
-        
-    def create_performance_chart(self, symbol: str = "EURUSD"):
-        """Create performance chart in MT5"""
-        try:
-            # Get historical performance data
-            performance_data = self._get_historical_performance()
-            
-            # Create custom indicator data
-            # This would require MQL5 EA to display
-            indicator_data = {
-                'equity_curve': performance_data['equity_values'],
-                'win_rate': performance_data['win_rates'],
-                'daily_pnl': performance_data['daily_pnls'],
-                'timestamps': performance_data['timestamps']
-            }
-            
-            return indicator_data
-            
-        except Exception as e:
-            print(f"Error creating performance chart: {e}")
-            return None
-    
-    def _get_historical_performance(self) -> Dict:
-        """Get historical performance data"""
-        # This would fetch historical data from your database
-        # For now, return sample data
-        dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-        
-        return {
-            'timestamps': dates.tolist(),
-            'equity_values': np.random.cumsum(np.random.randn(30) * 100) + 10000,
-            'win_rates': np.random.uniform(45, 75, 30),
-            'daily_pnls': np.random.randn(30) * 200
-        }
 
 
 @dataclass
@@ -1211,11 +706,12 @@ class AppKeepAlive:
         self.active = False
 
 def initialize_session_state():
-    """Fallback session state initialization"""
+    """Initialize session state - Premium only"""
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
-        st.session_state.subscription_tier = 'free'
+        st.session_state.subscription_tier = 'none'  # Changed from 'free' to 'none'
         st.session_state.premium_key = ''
+        st.session_state.disclaimer_consented = False
         st.session_state.selected_ticker = '^GSPC'
         st.session_state.selected_timeframe = '1day'
         st.session_state.current_prediction = None
@@ -2274,7 +1770,7 @@ def create_admin_panel():
     
 
 def create_bright_enhanced_header():
-    """Enhanced header with better contrast and visibility"""
+    """Enhanced header - Premium only"""
     col1, col2, col3 = st.columns([2, 5, 2])
     
     with col1:
@@ -2284,31 +1780,29 @@ def create_bright_enhanced_header():
         st.markdown("""
         <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea, #764ba2); 
                     border-radius: 15px; color: white; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
-            <h1 style="color: white !important; margin: 0; font-size: 2.5rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">
-                🚀 AI Trading Professional
+            <h1 style="color: white !important; margin: 0; font-size: 2.5rem;">
+                🚀 AI Trading Professional - Premium
             </h1>
-            <p style="color: #f8f9fa; margin: 10px 0 0 0; font-size: 1.1rem; font-weight: 500;">
-                Fully Integrated Backend • Real-time Analysis • Advanced AI
+            <p style="color: #f8f9fa; margin: 10px 0 0 0; font-size: 1.1rem;">
+                Premium-Only • Advanced AI • Professional Trading
             </p>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        tier_color = "#FFD700" if st.session_state.subscription_tier == 'premium' else "#6c757d"
-        tier_bg_color = "#1a1a1a" if st.session_state.subscription_tier == 'premium' else "#f8f9fa"
-        tier_text_color = "#FFD700" if st.session_state.subscription_tier == 'premium' else "#495057"
-        tier_text = "PREMIUM ACTIVE" if st.session_state.subscription_tier == 'premium' else "FREE TIER"
+        if st.session_state.subscription_tier == 'premium':
+            tier_color = "#FFD700"
+            tier_text = "PREMIUM ACTIVE"
+        else:
+            tier_color = "#dc3545"
+            tier_text = "ACCESS REQUIRED"
         
         st.markdown(
-            f'''
-            <div style="background: {tier_bg_color}; color: {tier_text_color}; 
+            f'''<div style="background: {tier_color}; color: #000; 
                         padding: 20px; border-radius: 12px; text-align: center; 
-                        font-weight: bold; font-size: 1.1rem;
-                        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                        border: 2px solid {tier_color};">
+                        font-weight: bold; font-size: 1.1rem;">
                 {tier_text}
-            </div>
-            ''',
+            </div>''',
             unsafe_allow_html=True
         )
     
@@ -4769,11 +4263,7 @@ def create_enhanced_sidebar():
                 with st.expander("🔓 See All Premium Features"):
                     for feature in features[8:]:
                        st.markdown(f"• {feature}")
-        else:
-            st.info("ℹ️ **FREE TIER ACTIVE**")
-            usage = st.session_state.daily_usage.get('predictions', 0)
-            st.markdown(f"**Daily Usage:** {usage}/10 predictions")
-            
+        
             premium_key = st.text_input(
                 "Enter Premium Key",
                 type="password",
@@ -4809,8 +4299,6 @@ def create_enhanced_sidebar():
         )
         
         available_tickers = ticker_categories[category]
-        if st.session_state.subscription_tier == 'free':
-            available_tickers = available_tickers[:3]  # Limit for free tier
         
         ticker = st.selectbox(
             "Select Asset",
@@ -4908,25 +4396,12 @@ def create_enhanced_sidebar():
 
 
 def create_enhanced_prediction_section():
-    """Enhanced prediction section with premium key click tracking"""
+    """Enhanced prediction section - Premium only"""
     
     st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
     asset_type = get_asset_type(ticker)
-    
-    # Asset information display
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"**Asset:** {ticker}")
-    with col2:
-        st.info(f"**Type:** {asset_type.title()}")
-    with col3:
-        if ticker in st.session_state.real_time_prices:
-            price = st.session_state.real_time_prices[ticker]
-            st.info(f"**Price:** ${price:.4f}")
-        else:
-            st.info("**Price:** Loading...")
     
     # Show premium status and remaining clicks
     if st.session_state.subscription_tier == 'premium':
@@ -6678,102 +6153,6 @@ def display_enhanced_trading_plan_tab(prediction: Dict):
     
     st.info("💡 **Remember**: This plan is based on AI analysis and should be combined with your own market analysis and risk tolerance. Always trade responsibly.")
 
-def display_basic_analysis_tab(prediction: Dict):
-    """Basic analysis for free tier users"""
-    st.subheader("📊 Basic Market Analysis")
-    
-    ticker = prediction.get('ticker', '')
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    confidence = prediction.get('confidence', 0)
-    
-    # Basic technical levels
-    st.markdown("#### 📈 Technical Levels")
-    
-    # Simple support/resistance based on current price
-    support_level = current_price * 0.98
-    resistance_level = current_price * 1.02
-    
-    tech_cols = st.columns(3)
-    
-    with tech_cols[0]:
-        st.metric("Support", f"${support_level:.4f}", help="Potential support level")
-    
-    with tech_cols[1]:
-        st.metric("Current", f"${current_price:.4f}", help="Current market price")
-    
-    with tech_cols[2]:
-        st.metric("Resistance", f"${resistance_level:.4f}", help="Potential resistance level")
-    
-    # Basic trend analysis
-    st.markdown("#### 📊 Trend Analysis")
-    
-    price_change_pct = ((predicted_price - current_price) / current_price) * 100
-    
-    if price_change_pct > 0.5:
-        trend = "📈 **BULLISH TREND**"
-        trend_color = "green"
-        trend_desc = "AI models suggest upward price movement"
-    elif price_change_pct < -0.5:
-        trend = "📉 **BEARISH TREND**"
-        trend_color = "red"
-        trend_desc = "AI models suggest downward price movement"
-    else:
-        trend = "↔️ **NEUTRAL TREND**"
-        trend_color = "gray"
-        trend_desc = "AI models suggest sideways price movement"
-    
-    st.markdown(
-        f'<div style="padding:20px;background:linear-gradient(135deg, #f8f9fa, #ffffff);'
-        f'border-left:5px solid {trend_color};border-radius:10px;margin:20px 0">'
-        f'<h3 style="color:{trend_color};margin:0">{trend}</h3>'
-        f'<p style="margin:10px 0 0 0">{trend_desc}</p>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    
-    # Basic risk assessment
-    st.markdown("#### ⚠️ Risk Assessment")
-    
-    asset_type = get_asset_type(ticker)
-    
-    risk_levels = {
-        'crypto': ('High Risk', 'red', 'Cryptocurrency assets are highly volatile'),
-        'forex': ('Medium Risk', 'orange', 'Currency pairs can move quickly on economic news'),
-        'commodity': ('Medium Risk', 'orange', 'Commodity prices affected by supply/demand'),
-        'index': ('Low-Medium Risk', 'yellow', 'Broad market indices are generally less volatile'),
-        'stock': ('Medium Risk', 'orange', 'Individual stocks carry company-specific risks')
-    }
-    
-    risk_level, risk_color, risk_desc = risk_levels.get(asset_type, risk_levels['stock'])
-    
-    st.markdown(
-        f'<div style="padding:15px;background:#f8f9fa;border-radius:8px;'
-        f'border-left:4px solid {risk_color}">'
-        f'<strong style="color:{risk_color}">Risk Level: {risk_level}</strong><br>'
-        f'<span style="color:#666">{risk_desc}</span>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    
-    # Upgrade promotion
-    st.markdown("#### 🚀 Unlock Advanced Features")
-    
-    st.info("""
-    **Upgrade to Premium for:**
-    
-    • 🤖 8 Advanced AI Models
-    • 📊 Cross-validation Analysis  
-    • 🔍 SHAP Model Explanations
-    • ⚠️ Advanced Risk Metrics
-    • 📈 Market Regime Detection
-    • 🌐 Real-time Alternative Data
-    • 🚨 Model Drift Detection
-    • 💼 Portfolio Optimization
-    
-    Enter Premium Key: **Prem246_357**
-    """)
-
 
 def create_advanced_analytics_section():
     """Advanced analytics section for premium users"""
@@ -6819,110 +6198,6 @@ def create_advanced_analytics_section():
     
     # Display results
     display_analytics_results()
-
-
-def create_basic_analytics_section():
-    """Basic analytics for free tier users"""
-    st.header("📊 Basic Analytics")
-    
-    ticker = st.session_state.selected_ticker
-    
-    # Basic market information
-    st.markdown("#### 📈 Market Overview")
-    
-    # Get basic price info
-    current_price = st.session_state.real_time_prices.get(ticker, 0)
-    asset_type = get_asset_type(ticker)
-    
-    info_cols = st.columns(3)
-    
-    with info_cols[0]:
-        st.metric("Current Price", f"${current_price:.4f}")
-    
-    with info_cols[1]:
-        st.metric("Asset Type", asset_type.title())
-    
-    with info_cols[2]:
-        market_status = "Open" if is_market_open() else "Closed"
-        st.metric("Market Status", market_status)
-    
-    # Basic trend analysis
-    st.markdown("#### 📊 Simple Trend Analysis")
-    
-    # Generate simple moving averages
-    dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-    base_price = current_price
-    prices = []
-    
-    for i in range(30):
-        daily_change = np.random.normal(0, 0.01)  # 1% daily volatility
-        if i == 0:
-            prices.append(base_price)
-        else:
-            new_price = prices[-1] * (1 + daily_change)
-            prices.append(new_price)
-    
-    df_trend = pd.DataFrame({
-        'Date': dates,
-        'Price': prices
-    })
-    
-    # Calculate simple moving averages
-    df_trend['SMA_5'] = df_trend['Price'].rolling(5).mean()
-    df_trend['SMA_10'] = df_trend['Price'].rolling(10).mean()
-    
-    # Create basic chart
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['Price'],
-        mode='lines',
-        name='Price',
-        line=dict(color='blue', width=2)
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['SMA_5'],
-        mode='lines',
-        name='5-Day Average',
-        line=dict(color='orange', width=1)
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['SMA_10'],
-        mode='lines',
-        name='10-Day Average',
-        line=dict(color='red', width=1)
-    ))
-    
-    fig.update_layout(
-        title=f"{ticker} - Price Trend (30 Days)",
-        xaxis_title="Date",
-        yaxis_title="Price ($)",
-        template="plotly_white"
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Upgrade promotion
-    st.markdown("---")
-    st.markdown("#### 🚀 Unlock Advanced Analytics")
-    
-    st.info("""
-    **Premium Features Include:**
-    
-    • 📊 **Market Regime Detection** - AI-powered regime analysis
-    • 🚨 **Model Drift Detection** - Monitor model performance
-    • 🔍 **SHAP Explanations** - Understand AI decisions
-    • 🌐 **Alternative Data** - Real-time sentiment, options flow
-    • ⚠️ **Advanced Risk Metrics** - VaR, Sharpe, Sortino ratios
-    • 📈 **Cross-Validation** - Rigorous model validation
-    
-    **Enter Premium Key: xxxxxxxxx**
-    """)
 
 
 def create_portfolio_management_section():
@@ -7963,152 +7238,6 @@ def generate_simulated_cv_results(ticker: str, models: List[str]) -> Dict:
         'simulated': True,
         'timestamp': datetime.now().isoformat()
     }
-    
-    
-def create_mt5_integration_tab():
-    """Create MT5 integration tab in the main app"""
-    st.header("📈 MetaTrader 5 Integration")
-    
-    # Check if MT5 is available
-    if not MT5_AVAILABLE:
-        st.error("⚠️ MetaTrader5 Not Available")
-        st.markdown("""
-        MetaTrader5 integration is not available in this environment.
-        
-        **Possible reasons:**
-        - Running on a non-Windows system
-        - MetaTrader5 not installed
-        - Running in a cloud environment (like Streamlit Cloud)
-        
-        **To use MT5 integration:**
-        - Run the application locally on Windows
-        - Install MetaTrader5 terminal
-        - Install the MetaTrader5 Python package: `pip install MetaTrader5`
-        """)
-        return
-    
-    # Connection setup
-    st.markdown("### 🔗 MT5 Connection Setup")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        account = st.number_input("MT5 Account Number", value=0, step=1)
-        password = st.text_input("Password", type="password")
-    
-    with col2:
-        server = st.text_input("Server", value="MetaQuotes-Demo")
-        mt5_path = st.text_input("MT5 Path (optional)", help="Leave empty for default")
-    
-    # Auto trading settings
-    st.markdown("### ⚙️ Auto Trading Settings")
-    
-    settings_col1, settings_col2 = st.columns(2)
-    
-    with settings_col1:
-        auto_trading_enabled = st.checkbox("Enable Auto Trading", value=False)
-        min_confidence = st.slider("Minimum Confidence (%)", 0, 100, 70)
-    
-    with settings_col2:
-        max_risk_per_trade = st.slider("Max Risk per Trade (%)", 0.1, 5.0, 2.0, 0.1)
-        max_daily_trades = st.number_input("Max Daily Trades", 1, 50, 10)
-    
-    # Connection button
-    if st.button("🚀 Connect to MT5", type="primary"):
-        if account > 0 and password:
-            with st.spinner("Connecting to MT5..."):
-                mt5_integration = MT5Integration()
-                
-                success = mt5_integration.setup_mt5_connection(
-                    account=account,
-                    password=password,
-                    server=server,
-                    path=mt5_path if mt5_path else None
-                )
-                
-                if success:
-                    st.success("✅ Successfully connected to MT5!")
-                    st.session_state.mt5_integration = mt5_integration
-                    st.session_state.mt5_connected = True
-                else:
-                    st.error("❌ Failed to connect to MT5")
-        else:
-            st.error("Please enter account number and password")
-    
-    # MT5 Status and Performance
-    if st.session_state.get('mt5_connected', False):
-        display_mt5_performance()
-
-def display_mt5_performance():
-    """Display MT5 performance metrics"""
-    st.markdown("---")
-    st.markdown("### 📊 MT5 Performance Dashboard")
-    
-    mt5_trader = st.session_state.get('mt5_trader')
-    if not mt5_trader:
-        st.warning("MT5 trader not initialized")
-        return
-    
-    # Get performance report
-    performance = mt5_trader.get_performance_report()
-    
-    # Performance metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Account Balance", f"${performance.get('account_balance', 0):,.2f}")
-    
-    with col2:
-        st.metric("Account Equity", f"${performance.get('account_equity', 0):,.2f}")
-    
-    with col3:
-        st.metric("Total Trades", performance.get('total_trades', 0))
-    
-    with col4:
-        st.metric("Win Rate", f"{performance.get('win_rate', 0):.1f}%")
-    
-    # P&L metrics
-    pnl_col1, pnl_col2, pnl_col3 = st.columns(3)
-    
-    with pnl_col1:
-        total_pnl = performance.get('total_pnl', 0)
-        st.metric("Total P&L", f"${total_pnl:,.2f}", 
-                 delta_color="normal" if total_pnl >= 0 else "inverse")
-    
-    with pnl_col2:
-        daily_pnl = performance.get('daily_pnl', 0)
-        st.metric("Daily P&L", f"${daily_pnl:,.2f}",
-                 delta_color="normal" if daily_pnl >= 0 else "inverse")
-    
-    with pnl_col3:
-        st.metric("Active Positions", performance.get('active_positions', 0))
-    
-    # Control buttons
-    control_col1, control_col2, control_col3 = st.columns(3)
-    
-    with control_col1:
-        if st.button("🔄 Refresh Status"):
-            st.rerun()
-    
-    with control_col2:
-        if st.button("📤 Send Current Prediction"):
-            if st.session_state.get('current_prediction'):
-                mt5_integration = st.session_state.get('mt5_integration')
-                if mt5_integration:
-                    success = mt5_integration.send_prediction_to_mt5(
-                        st.session_state.current_prediction
-                    )
-                    if success:
-                        st.success("✅ Signal sent to MT5!")
-                    else:
-                        st.error("❌ Failed to send signal")
-    
-    with control_col3:
-        if st.button("⚠️ Close All Positions", type="secondary"):
-            if st.button("Confirm Close All", key="confirm_close"):
-                mt5_trader.close_all_positions()
-                st.success("All positions closed!")    
-    
 
 def create_professional_footer():
     """Create professional footer with system information"""
@@ -8214,33 +7343,46 @@ def configure_page():
     )
 
 def create_sidebar(advanced_app_state):
-    """
-    Create the entire sidebar with all sections
-    
-    Args:
-        advanced_app_state (AdvancedAppState): The advanced app state object
-    """
+    """Create sidebar - Premium only"""
     with st.sidebar:
-        # Subscription Management Section
-        st.header("🔑 Subscription Management")
+        st.header("🔑 Premium Access")
         
         if st.session_state.subscription_tier == 'premium':
             _create_premium_sidebar(advanced_app_state)
         else:
-            _create_free_tier_sidebar(advanced_app_state)
+            # Show premium key entry only
+            st.warning("⚠️ **PREMIUM ACCESS REQUIRED**")
+            st.markdown("This is a premium-only application.")
+            
+            premium_key = st.text_input(
+                "Enter Premium Key",
+                type="password",
+                value=st.session_state.get('premium_key', ''),
+                help="Enter your premium key to access all features"
+            )
+            
+            if st.button("🚀 Activate Premium", type="primary"):
+                success = advanced_app_state.update_subscription(premium_key)
+                if success:
+                    st.success("Premium activated! Refreshing...")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Invalid premium key")
+                    
+            # Stop execution until premium is activated
+            st.stop()        
         
-        # Asset Selection Section
-        st.markdown("---")
-        st.header("📈 Asset Selection")
-        _create_asset_selection_sidebar()
-        
-        # System Statistics Section
-        st.markdown("---")
-        st.header("📊 Session Statistics")
-        _create_system_statistics_sidebar()
-        
-        # Additional Premium Features (if applicable)
+        # Only show other sections if premium
         if st.session_state.subscription_tier == 'premium':
+            st.markdown("---")
+            st.header("📈 Asset Selection")
+            _create_asset_selection_sidebar()
+            
+            st.markdown("---")
+            st.header("📊 Session Statistics")
+            _create_system_statistics_sidebar()
+            
             st.markdown("---")
             st.header("🔄 Real-time Status")
             _create_premium_realtime_status()
@@ -8347,104 +7489,6 @@ def _create_premium_sidebar(advanced_app_state):
         st.session_state.subscription_info = {}
         st.rerun()
 
-def _create_free_tier_sidebar(advanced_app_state):
-    """
-    Create sidebar content for free tier with proper disclaimer handling.
-    
-    Args:
-        advanced_app_state (AdvancedAppState): The advanced app state object
-    """
-    # Initialize disclaimer consent state if not exists
-    if 'disclaimer_consented' not in st.session_state:
-        st.session_state.disclaimer_consented = False
-
-    # Always show disclaimer if not consented - BLOCK ALL OTHER CONTENT
-    if not st.session_state.disclaimer_consented:
-        # Large, attention-grabbing disclaimer
-        st.markdown("""
-        ## 🚨 CRITICAL INVESTMENT RISK WARNING
-        
-        ### PLEASE READ CAREFULLY
-        
-        ⚠️ **By using this platform, you acknowledge:**
-        
-        1. 📊 **Algorithmic Predictions**: 
-           - NOT guaranteed investment recommendations
-           - Based on historical data and current market conditions
-        
-        2. 💸 **Financial Risk**: 
-           - Significant potential for capital loss
-           - All investments carry inherent risks
-        
-        3. 🔮 **No Guaranteed Returns**: 
-           - Past performance does NOT predict future results
-           - Market conditions can change rapidly
-        
-        4. 🧠 **AI Limitations**: 
-           - Cannot predict unexpected market events
-           - Subject to data and model constraints
-        
-        5. 👤 **Personal Responsibility**: 
-           - YOU are solely responsible for ALL investment decisions
-           - Platform is for informational purposes only
-        
-        ### CONSENT REQUIRED TO PROCEED
-        """)
-        
-        # Consent mechanism - centered and prominent
-        st.markdown("---")
-        
-        consent_col1, consent_col2 = st.columns(2)
-        
-        with consent_col1:
-            if st.button(
-                "✅ I FULLY UNDERSTAND & CONSENT", 
-                key="disclaimer_consent_sidebar", 
-                type="primary",
-                help="Confirm you've read and understand all risks",
-                use_container_width=True
-            ):
-                st.session_state.disclaimer_consented = True
-                st.success("✅ Consent recorded. You may now use the platform.")
-                time.sleep(1)
-                st.rerun()
-        
-        with consent_col2:
-            if st.button(
-                "❌ I DO NOT CONSENT", 
-                key="disclaimer_decline_sidebar", 
-                type="secondary",
-                help="Exit if you do not agree to the terms",
-                use_container_width=True
-            ):
-                st.error("❌ Access denied. You must consent to use the platform.")
-                st.stop()
-        
-        # CRITICAL: Stop all further execution if not consented
-        st.stop()
-
-    # Only show premium activation AFTER consent
-    st.info("ℹ️ **FREE TIER ACTIVE**")
-    usage = st.session_state.daily_usage.get('predictions', 0)
-    st.markdown(f"**Daily Usage:** {usage}/10 predictions")
-    
-    premium_key = st.text_input(
-        "Enter Premium Key",
-        type="password",
-        value=st.session_state.get('premium_key', ''),
-        key="sidebar_premium_key_input",
-        help="Enter 'Prem246_357' for full access"
-    )
-    
-    if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
-        success = advanced_app_state.update_subscription(premium_key)
-        
-        if success:
-            st.success("Premium activated successfully!")
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.error("Invalid premium key")
 
 def _create_asset_selection_sidebar():
     """
@@ -8457,22 +7501,10 @@ def _create_asset_selection_sidebar():
         '💱 Forex': ['USDJPY']
     }
     
-    category = st.selectbox(
-        "Asset Category",
-        options=list(ticker_categories.keys()),
-        key="enhanced_category_select"
-    )
+    category = st.selectbox("Asset Category", options=list(ticker_categories.keys()))
+    available_tickers = ticker_categories[category]  # No limitations
     
-    available_tickers = ticker_categories[category]
-    if st.session_state.subscription_tier == 'free':
-        available_tickers = available_tickers[:3]  # Limit for free tier
-    
-    ticker = st.selectbox(
-        "Select Asset",
-        options=available_tickers,
-        key="enhanced_ticker_select",
-        help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
-    )
+    ticker = st.selectbox("Select Asset", options=available_tickers)
     
     if ticker != st.session_state.selected_ticker:
         st.session_state.selected_ticker = ticker
@@ -8538,18 +7570,16 @@ def _create_premium_realtime_status():
             
             
 def create_main_content():
-    """Create the main content area with tabs and sections."""
+    """Create main content - Premium only"""
     
-    # CHECK DISCLAIMER CONSENT BEFORE SHOWING ANY CONTENT
+    # CHECK DISCLAIMER CONSENT
     if not st.session_state.get('disclaimer_consented', False):
-        st.markdown("""
-        <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #ff6b6b, #ee5a24);
-                    color:white;border-radius:15px;margin:20px 0">
-            <h1>🚨 DISCLAIMER CONSENT REQUIRED</h1>
-            <h3>Please read and accept the risk disclaimer in the sidebar to proceed</h3>
-            <p>All features are disabled until you provide consent</p>
-        </div>
-        """, unsafe_allow_html=True)
+        show_disclaimer_screen()
+        return
+    
+    # CHECK PREMIUM STATUS
+    if st.session_state.subscription_tier != 'premium':
+        show_premium_required_screen()
         return
     
     # Mobile and performance optimizations
@@ -8566,75 +7596,103 @@ def create_main_content():
     # Enhanced dashboard styling
     create_enhanced_dashboard_styling()
     
-    # Determine available tabs based on subscription
-    if st.session_state.subscription_tier == 'premium':
-        # Check if user has master key for admin panel
-        has_master_key = st.session_state.premium_key == PremiumKeyManager.MASTER_KEY
-        
-        if has_master_key:
-            # Master key user gets admin panel, FTMO dashboard, AND MT5 integration
-            tabs = st.tabs([
-                "AI Prediction", 
-                "Advanced Analytics", 
-                "Portfolio Management", 
-                "Backtesting",
-                "FTMO Dashboard",
-                "MT5 Integration",  # ADD THIS LINE
-                "Admin Panel"
-            ])
-            
-            with tabs[0]:
-                create_enhanced_prediction_section()
-            with tabs[1]:
-                create_advanced_analytics_section()
-            with tabs[2]:
-                create_portfolio_management_section()
-            with tabs[3]:
-                create_backtesting_section()
-            with tabs[4]:
-                create_ftmo_dashboard()
-            with tabs[5]:
-                create_mt5_integration_tab()  # ADD THIS LINE
-            with tabs[6]:
-                create_admin_panel()
-        else:
-            # Regular premium users get FTMO dashboard and MT5 integration but no admin panel
-            tabs = st.tabs([
-                "AI Prediction", 
-                "Advanced Analytics", 
-                "Portfolio Management", 
-                "Backtesting",
-                "FTMO Dashboard",
-                "MT5 Integration"  # ADD THIS LINE
-            ])
-            
-            with tabs[0]:
-                create_enhanced_prediction_section()
-            with tabs[1]:
-                create_advanced_analytics_section()
-            with tabs[2]:
-                create_portfolio_management_section()
-            with tabs[3]:
-                create_backtesting_section()
-            with tabs[4]:
-                create_ftmo_dashboard()
-            with tabs[5]:
-                create_mt5_integration_tab()  # ADD THIS LINE
-    else:
-        # Free tier tabs remain the same (no MT5 integration for free users)
+    # Check if user has master key
+    has_master_key = (st.session_state.subscription_tier == 'premium' and 
+                     st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
+         
+    if has_master_key:
+        # Master key user gets admin panel AND FTMO dashboard
         tabs = st.tabs([
             "AI Prediction", 
-            "Basic Analytics"
+            "Advanced Analytics", 
+            "Portfolio Management", 
+            "Backtesting",
+            "FTMO Dashboard",
+            "Admin Panel"
         ])
         
         with tabs[0]:
             create_enhanced_prediction_section()
         with tabs[1]:
-            create_basic_analytics_section()
+            create_advanced_analytics_section()
+        with tabs[2]:
+            create_portfolio_management_section()
+        with tabs[3]:
+            create_backtesting_section()
+        with tabs[4]:
+            create_ftmo_dashboard()
+        with tabs[5]:
+            create_admin_panel()
+    else:
+        # Regular premium users get FTMO dashboard but no admin panel
+        tabs = st.tabs([
+            "AI Prediction", 
+            "Advanced Analytics", 
+            "Portfolio Management", 
+            "Backtesting",
+            "FTMO Dashboard"
+        ])
+        
+        with tabs[0]:
+            create_enhanced_prediction_section()
+        with tabs[1]:
+            create_advanced_analytics_section()
+        with tabs[2]:
+            create_portfolio_management_section()
+        with tabs[3]:
+            create_backtesting_section()
+        with tabs[4]:
+            create_ftmo_dashboard()
     
     # Update data and show footer
     update_real_time_data()
     create_professional_footer()
+    
+def show_disclaimer_screen():
+    """Show disclaimer consent screen"""
+    st.markdown("""
+    <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #667eea, #764ba2);
+                color:white;border-radius:15px;margin:20px 0">
+        <h1>🚨 INVESTMENT RISK DISCLAIMER</h1>
+        <h3>Please read and acknowledge the risks before proceeding</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    ## ⚠️ CRITICAL INVESTMENT RISK WARNING
+    
+    **By using this platform, you acknowledge:**
+    
+    1. 📊 **Algorithmic Predictions**: NOT guaranteed investment recommendations
+    2. 💸 **Financial Risk**: Significant potential for capital loss
+    3. 🔮 **No Guaranteed Returns**: Past performance does NOT predict future results
+    4. 🧠 **AI Limitations**: Cannot predict unexpected market events
+    5. 👤 **Personal Responsibility**: YOU are solely responsible for ALL investment decisions
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("✅ I UNDERSTAND & CONSENT", type="primary", use_container_width=True):
+            st.session_state.disclaimer_consented = True
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ I DO NOT CONSENT", type="secondary", use_container_width=True):
+            st.error("❌ Access denied. You must consent to use the platform.")
+            st.stop()
+
+def show_premium_required_screen():
+    """Show premium required screen"""
+    st.markdown("""
+    <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #667eea, #764ba2);
+                color:white;border-radius:15px;margin:20px 0">
+        <h1>🚀 Premium Access Required</h1>
+        <h3>This application requires a premium subscription</h3>
+        <p>Enter your premium key in the sidebar to access all features</p>
+    </div>
+    """, unsafe_allow_html=True)    
+    
 
 def main():
     """
