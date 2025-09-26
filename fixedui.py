@@ -6198,6 +6198,155 @@ def create_advanced_analytics_section():
     
     # Display results
     display_analytics_results()
+    
+    
+def create_mobile_config_manager(is_mobile):
+    """Enhanced mobile config manager with actual functionality"""
+    class MobileConfigManager:
+        def __init__(self, is_mobile_device):
+            self.is_mobile = is_mobile_device
+            self.config = self._generate_mobile_config()
+        
+        def _generate_mobile_config(self):
+            if self.is_mobile:
+                return {
+                    "chart_height": 300,
+                    "sidebar_collapsed": True,
+                    "columns_per_row": 1,
+                    "font_size": "small",
+                    "reduced_animations": True,
+                    "simplified_charts": True
+                }
+            else:
+                return {
+                    "chart_height": 500,
+                    "sidebar_collapsed": False,
+                    "columns_per_row": 3,
+                    "font_size": "normal",
+                    "reduced_animations": False,
+                    "simplified_charts": False
+                }
+        
+        def get_config(self, key=None):
+            if key:
+                return self.config.get(key)
+            return self.config
+    
+    return MobileConfigManager(is_mobile)
+
+def create_mobile_performance_optimizer(is_mobile):
+    """Enhanced mobile performance optimizer with actual functionality"""
+    class MobilePerformanceOptimizer:
+        def __init__(self, is_mobile_device):
+            self.is_mobile = is_mobile_device
+            self.optimizations = self._setup_optimizations()
+        
+        def _setup_optimizations(self):
+            if self.is_mobile:
+                return {
+                    "cache_enabled": True,
+                    "lazy_loading": True,
+                    "reduced_precision": True,
+                    "batch_size": 50,
+                    "update_frequency": 10  # seconds
+                }
+            else:
+                return {
+                    "cache_enabled": False,
+                    "lazy_loading": False,
+                    "reduced_precision": False,
+                    "batch_size": 100,
+                    "update_frequency": 5  # seconds
+                }
+        
+        def optimize_data_loading(self, data):
+            """Optimize data loading based on device type"""
+            if self.is_mobile and len(data) > self.optimizations["batch_size"]:
+                return data.tail(self.optimizations["batch_size"])
+            return data
+        
+        def get_chart_config(self):
+            """Get optimized chart configuration"""
+            if self.is_mobile:
+                return {
+                    "height": 300,
+                    "show_toolbar": False,
+                    "responsive": True,
+                    "animation": False
+                }
+            else:
+                return {
+                    "height": 500,
+                    "show_toolbar": True,
+                    "responsive": True,
+                    "animation": True
+                }
+    
+    return MobilePerformanceOptimizer(is_mobile)
+
+def apply_mobile_optimizations():
+    """Enhanced mobile optimization with conditional CSS"""
+    st.markdown("""
+    <style>
+    /* Mobile-first responsive design */
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding: 0.5rem;
+            max-width: 100%;
+        }
+        
+        /* Simplify metrics display */
+        [data-testid="metric-container"] {
+            margin: 0.25rem 0;
+            padding: 0.5rem;
+        }
+        
+        /* Stack columns vertically */
+        .stColumns {
+            flex-direction: column;
+        }
+        
+        /* Reduce chart heights */
+        .js-plotly-plot {
+            height: 300px !important;
+        }
+        
+        /* Optimize buttons */
+        .stButton > button {
+            width: 100%;
+            margin: 0.25rem 0;
+            padding: 0.5rem;
+            font-size: 14px;
+        }
+        
+        /* Collapse sidebar by default on mobile */
+        .css-1d391kg {
+            transform: translateX(-100%);
+        }
+        
+        /* Optimize text areas */
+        .stTextArea textarea {
+            max-height: 200px;
+        }
+        
+        /* Hide certain elements on mobile */
+        .mobile-hide {
+            display: none !important;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        /* Extra small screens */
+        .main .block-container {
+            padding: 0.25rem;
+        }
+        
+        h1 { font-size: 1.5rem; }
+        h2 { font-size: 1.25rem; }
+        h3 { font-size: 1.1rem; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 def create_portfolio_management_section():
@@ -7586,12 +7735,20 @@ def create_main_content():
     is_mobile = is_mobile_device()
     device_type = get_device_type()
     
-    # Create mobile-specific managers
-    mobile_config = create_mobile_config_manager(is_mobile)
-    mobile_performance = create_mobile_performance_optimizer(is_mobile)
+    # Create mobile-specific managers with proper functionality
+    mobile_config_manager = create_mobile_config_manager(is_mobile)
+    mobile_performance_optimizer = create_mobile_performance_optimizer(is_mobile)
     
     # Apply mobile optimizations
     apply_mobile_optimizations()
+    
+    # Use mobile config for conditional rendering
+    if is_mobile:
+        chart_height = mobile_config_manager.get_config('chart_height')
+        columns_per_row = mobile_config_manager.get_config('columns_per_row')
+    else:
+        chart_height = 500
+        columns_per_row = 3
     
     # Enhanced dashboard styling
     create_enhanced_dashboard_styling()
