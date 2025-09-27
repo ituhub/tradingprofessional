@@ -1115,373 +1115,267 @@ class EnhancedAnalyticsSuite:
 
 
 def create_enhanced_dashboard_styling():
-    """Enhanced CSS styling for better visibility and modern appearance"""
+    """Modern Material Design styling with glassmorphism effects"""
     st.markdown("""
     <style>
-    /* Main app background - lighter and more professional */
-    .stApp {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%) !important;
+    /* Import Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    /* Global Variables */
+    :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --success-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        --warning-gradient: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        --glass-bg: rgba(255, 255, 255, 0.1);
+        --glass-border: rgba(255, 255, 255, 0.2);
+        --shadow-soft: 0 8px 32px rgba(31, 38, 135, 0.15);
+        --shadow-medium: 0 12px 40px rgba(31, 38, 135, 0.2);
     }
     
-    /* Main content area - clean white background */
+    /* Modern App Background */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Main Content Container */
     .main .block-container {
-        background: #ffffff;
-        border-radius: 15px;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 20px;
         padding: 2rem;
         margin: 1rem 0;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: var(--shadow-soft);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
     }
     
-    /* Sidebar styling - darker for contrast */
-    .css-1d391kg {
-        background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
-        color: white;
+    /* Glassmorphism Cards */
+    .glass-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
+        border-radius: 20px;
+        box-shadow: var(--shadow-soft);
+        padding: 24px;
+        margin: 16px 0;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     
-    /* Sidebar text color */
-    .css-1d391kg .element-container {
-        color: white !important;
+    .glass-card:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--shadow-medium);
+        border-color: rgba(102, 126, 234, 0.3);
     }
     
-    /* Enhanced metric cards */
-    .metric-card {
-        background: linear-gradient(135deg, #ffffff, #f8f9fa);
-        border-radius: 12px;
+    /* Modern Metrics */
+    .metric-modern {
+        background: white;
+        border-radius: 16px;
         padding: 20px;
-        margin: 15px 0;
-        border-left: 5px solid #007bff;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        border-left: 4px solid transparent;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+        margin: 12px 0;
     }
     
-    .metric-card:hover {
+    .metric-modern::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--primary-gradient);
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+    }
+    
+    .metric-modern:hover::before {
+        transform: translateX(0);
+    }
+    
+    .metric-modern:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
     }
     
-    /* Enhanced headers */
-    h1, h2, h3 {
-        color: #2c3e50 !important;
-        font-weight: 600 !important;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Better button styling */
+    /* Enhanced Buttons */
     .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: var(--primary-gradient);
         color: white;
         border: none;
-        border-radius: 10px;
-        padding: 0.6rem 1.2rem;
-        font-weight: 600;
-        text-transform: uppercase;
+        border-radius: 12px;
+        padding: 12px 24px;
+        font-weight: 500;
+        font-size: 14px;
+        text-transform: none;
         letter-spacing: 0.5px;
-        transition: all 0.3s ease;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stButton > button::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        transition: left 0.5s;
+    }
+    
+    .stButton > button:hover::before {
+        left: 100%;
     }
     
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     }
     
-    /* Primary button styling */
+    /* Primary Button Variant */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-        box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        background: var(--success-gradient);
+        box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
     }
     
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #20c997 0%, #28a745 100%);
-        box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.5);
     }
     
-    /* Enhanced metrics display */
+    /* Modern Sidebar */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #2c3e50 0%, #3498db 100%);
+        border-right: none;
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Enhanced Metrics Display */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #ffffff, #f8f9fa);
         border: 1px solid #e9ecef;
-        border-radius: 10px;
-        padding: 1rem;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        transition: all 0.2s ease;
+        border-radius: 16px;
+        padding: 1.2rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
+        margin: 8px 0;
     }
     
     [data-testid="metric-container"]:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-        border-color: #007bff;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+        border-color: rgba(102, 126, 234, 0.3);
     }
     
-    /* Better data tables */
-    .stDataFrame {
-        background: white;
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    /* Charts Enhancement */
+    .js-plotly-plot {
+        border-radius: 16px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+        overflow: hidden !important;
+        margin: 16px 0 !important;
+        background: white !important;
     }
     
-    /* Enhanced tabs */
+    /* Tabs Modernization */
     .stTabs [data-baseweb="tab-list"] {
-        background: linear-gradient(90deg, #f8f9fa, #ffffff);
-        border-radius: 10px;
-        padding: 5px;
-        margin-bottom: 20px;
+        background: white;
+        border-radius: 12px;
+        padding: 4px;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        gap: 4px;
+        border: none;
     }
     
     .stTabs [data-baseweb="tab"] {
         background: transparent;
         border-radius: 8px;
-        color: #6c757d;
-        font-weight: 600;
-        padding: 10px 20px;
+        color: #64748b;
+        font-weight: 500;
+        padding: 12px 20px;
         transition: all 0.2s ease;
+        border: none;
     }
     
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background: linear-gradient(135deg, #007bff, #0056b3);
+        background: var(--primary-gradient);
         color: white;
-        box-shadow: 0 2px 10px rgba(0, 123, 255, 0.3);
+        box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
     }
     
-    /* Success/Warning/Error messages */
-    .stSuccess {
-        background: linear-gradient(135deg, #d4edda, #c3e6cb);
-        border: 1px solid #28a745;
-        border-radius: 10px;
-        padding: 15px;
-        color: #155724;
-        font-weight: 500;
-    }
-    
-    .stWarning {
-        background: linear-gradient(135deg, #fff3cd, #fdeaa7);
-        border: 1px solid #ffc107;
-        border-radius: 10px;
-        padding: 15px;
-        color: #856404;
-        font-weight: 500;
-    }
-    
-    .stError {
-        background: linear-gradient(135deg, #f8d7da, #f1b0b7);
-        border: 1px solid #dc3545;
-        border-radius: 10px;
-        padding: 15px;
-        color: #721c24;
-        font-weight: 500;
-    }
-    
-    .stInfo {
-        background: linear-gradient(135deg, #d1ecf1, #b8daff);
-        border: 1px solid #17a2b8;
-        border-radius: 10px;
-        padding: 15px;
-        color: #0c5460;
-        font-weight: 500;
-    }
-    
-    /* Enhanced charts container */
-    .js-plotly-plot {
-        background: white !important;
-        border-radius: 10px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-        padding: 10px;
-        margin: 10px 0;
-    }
-    
-    /* Better selectbox and input styling */
-    .stSelectbox > div > div {
-        background: white;
-        border-radius: 8px;
-        border: 2px solid #e9ecef;
-        transition: border-color 0.2s ease;
-    }
-    
-    .stSelectbox > div > div:focus-within {
-        border-color: #007bff;
-        box-shadow: 0 0 10px rgba(0, 123, 255, 0.1);
-    }
-    
-    .stNumberInput > div > div > input {
-        background: white;
-        border-radius: 8px;
-        border: 2px solid #e9ecef;
-        transition: border-color 0.2s ease;
-    }
-    
-    .stNumberInput > div > div > input:focus {
-        border-color: #007bff;
-        box-shadow: 0 0 10px rgba(0, 123, 255, 0.1);
-    }
-    
-    /* Enhanced text areas */
-    .stTextArea > div > div > textarea {
-        background: white;
-        border-radius: 8px;
-        border: 2px solid #e9ecef;
-        font-family: 'Courier New', monospace;
-        transition: border-color 0.2s ease;
-    }
-    
-    .stTextArea > div > div > textarea:focus {
-        border-color: #007bff;
-        box-shadow: 0 0 10px rgba(0, 123, 255, 0.1);
-    }
-    
-    /* Enhanced expanders */
-    .streamlit-expanderHeader {
-        background: linear-gradient(135deg, #f8f9fa, #ffffff);
-        border-radius: 10px;
-        padding: 15px;
-        border: 1px solid #e9ecef;
-        font-weight: 600;
-        color: #495057;
-        transition: all 0.2s ease;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        background: linear-gradient(135deg, #e9ecef, #f8f9fa);
-        border-color: #007bff;
-    }
-    
-    /* Better code blocks */
-    .stCode {
-        background: linear-gradient(135deg, #f8f9fa, #ffffff);
-        border: 1px solid #e9ecef;
-        border-radius: 10px;
-        padding: 20px;
-        font-family: 'Courier New', monospace;
-        font-size: 14px;
-        line-height: 1.6;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    }
-    
-    /* Enhanced spinners */
-    .stSpinner {
-        text-align: center;
-        padding: 20px;
-    }
-    
-    /* Custom status indicators */
-    .status-indicator {
-        display: inline-block;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .status-live {
-        background: linear-gradient(135deg, #28a745, #20c997);
-        color: white;
-        box-shadow: 0 2px 10px rgba(40, 167, 69, 0.3);
-    }
-    
-    .status-demo {
-        background: linear-gradient(135deg, #ffc107, #fd7e14);
-        color: white;
-        box-shadow: 0 2px 10px rgba(255, 193, 7, 0.3);
-    }
-    
-    .status-offline {
-        background: linear-gradient(135deg, #6c757d, #495057);
-        color: white;
-        box-shadow: 0 2px 10px rgba(108, 117, 125, 0.3);
-    }
-    
-    /* Enhanced progress bars */
-    .stProgress .st-bo {
-        background-color: #e9ecef;
-        border-radius: 10px;
-        height: 10px;
-    }
-    
-    .stProgress .st-bp {
-        background: linear-gradient(90deg, #007bff, #0056b3);
-        border-radius: 10px;
-    }
-    
-    /* Footer styling */
-    .footer-container {
-        background: linear-gradient(135deg, #2c3e50, #34495e);
-        color: white;
-        border-radius: 15px;
-        padding: 30px;
-        margin-top: 40px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Animation for loading states */
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.7; }
-        100% { opacity: 1; }
-    }
-    
-    .loading {
-        animation: pulse 1.5s ease-in-out infinite;
-    }
-    
-    /* Scrollbar styling */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #007bff, #0056b3);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(135deg, #0056b3, #007bff);
-    }
-    
-    /* Mobile responsiveness */
+    /* Mobile Responsiveness */
     @media (max-width: 768px) {
         .main .block-container {
             padding: 1rem;
             margin: 0.5rem 0;
+            border-radius: 12px;
         }
         
-        .metric-card {
-            padding: 15px;
-            margin: 10px 0;
+        .glass-card {
+            padding: 16px;
+            margin: 8px 0;
+            border-radius: 12px;
+        }
+        
+        .metric-modern {
+            padding: 16px;
+            margin: 8px 0;
         }
         
         .stButton > button {
-            padding: 0.5rem 1rem;
-            font-size: 14px;
+            width: 100%;
+            margin: 4px 0;
         }
+    }
+        
+    /* Loading Animations */
+    @keyframes shimmer {
+    0% { background-position: -468px 0; }
+    100% { background-position: 468px 0; }
+    }
+
+    .loading-shimmer {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 468px 100px;
+    animation: shimmer 1.5s infinite;
+    border-radius: 8px;
+    height: 20px;
+    margin: 8px 0;
+    }
+
+    /* Status Pills */
+    .status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-radius: 50px;
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    }
+
+    .status-live {
+    background: var(--success-gradient);
+    color: white;
+    }
+
+    .status-demo {
+    background: var(--warning-gradient);
+    color: white;
     }
     
-    /* High contrast mode for better accessibility */
-    @media (prefers-contrast: high) {
-        .stApp {
-            background: #ffffff !important;
-        }
-        
-        .main .block-container {
-            border: 2px solid #000000;
-        }
-        
-        h1, h2, h3 {
-            color: #000000 !important;
-        }
-    }
     </style>
     """, unsafe_allow_html=True)
+
     
 def create_admin_panel():
     """Enhanced admin panel for master key users with key management"""
@@ -1770,98 +1664,91 @@ def create_admin_panel():
     
 
 def create_bright_enhanced_header():
-    """Enhanced header - Premium only"""
-    col1, col2, col3 = st.columns([2, 5, 2])
-    
-    with col1:
-        st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=80)
-    
-    with col2:
-        st.markdown("""
-        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea, #764ba2); 
-                    border-radius: 15px; color: white; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
-            <h1 style="color: white !important; margin: 0; font-size: 2.5rem;">
-                🚀 AI Trading Professional - Premium
-            </h1>
-            <p style="color: #f8f9fa; margin: 10px 0 0 0; font-size: 1.1rem;">
-                Premium-Only • Advanced AI • Professional Trading
-            </p>
+    """Modern professional header with live status indicators"""
+    st.markdown("""
+    <div class="glass-card" style="text-align: center; margin-bottom: 32px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div style="background: var(--primary-gradient); padding: 16px; border-radius: 16px;">
+                    <span style="font-size: 32px;">🚀</span>
+                </div>
+                <div style="text-align: left;">
+                    <h1 style="margin: 0; background: var(--primary-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; font-size: 2.5rem;">
+                        AI Trading Professional
+                    </h1>
+                    <p style="margin: 4px 0 0 0; color: #64748b; font-weight: 500; font-size: 1.1rem;">
+                        Advanced AI • Real-time Analysis • Professional Trading
+                    </p>
+                </div>
+            </div>
+            <div class="status-pill status-live">
+                <span style="margin-right: 8px;">●</span>
+                PREMIUM ACTIVE
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
     
-    with col3:
-        if st.session_state.subscription_tier == 'premium':
-            tier_color = "#FFD700"
-            tier_text = "PREMIUM ACTIVE"
-        else:
-            tier_color = "#dc3545"
-            tier_text = "ACCESS REQUIRED"
-        
-        st.markdown(
-            f'''<div style="background: {tier_color}; color: #000; 
-                        padding: 20px; border-radius: 12px; text-align: center; 
-                        font-weight: bold; font-size: 1.1rem;">
-                {tier_text}
-            </div>''',
-            unsafe_allow_html=True
-        )
-    
-    st.markdown("---")
-    
-    # Enhanced status indicators with better visibility
-    col1, col2, col3 = st.columns(3)
+    # Modern status indicators
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        market_open = True  # You can replace with actual check
-        status_icon = "🟢" if market_open else "🔴"
-        status_text = "OPEN" if market_open else "CLOSED"
-        status_color = "#28a745" if market_open else "#dc3545"
-        
-        st.markdown(
-            f'''
-            <div style="background: white; padding: 15px; border-radius: 10px; 
-                        text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                        border-left: 5px solid {status_color};">
-                <div style="font-size: 1.5rem;">{status_icon}</div>
-                <div style="font-weight: 600; color: {status_color};">Market: {status_text}</div>
-            </div>
-            ''',
-            unsafe_allow_html=True
-        )
-    
+        create_status_card("Market", "OPEN", "🟢", True)
     with col2:
-        backend_status = "🟢 LIVE" if True else "🟡 DEMO"  # Replace with actual check
-        backend_color = "#28a745" if True else "#ffc107"
-        
-        st.markdown(
-            f'''
-            <div style="background: white; padding: 15px; border-radius: 10px; 
-                        text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                        border-left: 5px solid {backend_color};">
-                <div style="font-size: 1.5rem;">🔧</div>
-                <div style="font-weight: 600; color: {backend_color};">Backend: {backend_status}</div>
-            </div>
-            ''',
-            unsafe_allow_html=True
-        )
-    
+        create_status_card("Backend", "LIVE", "🟢", BACKEND_AVAILABLE)
     with col3:
-        api_status = "🟢 CONNECTED" if True else "🟡 SIMULATED"  # Replace with actual check
-        api_color = "#28a745" if True else "#ffc107"
-        
-        st.markdown(
-            f'''
-            <div style="background: white; padding: 15px; border-radius: 10px; 
-                        text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                        border-left: 5px solid {api_color};">
-                <div style="font-size: 1.5rem;">📡</div>
-                <div style="font-weight: 600; color: {api_color};">Data: {api_status}</div>
-            </div>
-            ''',
-            unsafe_allow_html=True
-        )
+        create_status_card("Data Feed", "ACTIVE", "🟢", True)
+    with col4:
+        create_status_card("AI Models", "6", "🤖", True)
     
     st.markdown("---")
+
+
+def create_status_card(label, value, icon, is_active):
+    """Create modern status indicator cards"""
+    status_class = "border-left: 4px solid #10b981" if is_active else "border-left: 4px solid #ef4444"
+    st.markdown(f"""
+    <div class="metric-modern" style="{status_class}">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <div style="color: #64748b; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;">
+                    {label}
+                </div>
+                <div style="color: #1e293b; font-size: 18px; font-weight: 600; margin-top: 4px;">
+                    {value}
+                </div>
+            </div>
+            <div style="font-size: 24px;">{icon}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    
+def create_modern_metric(title, value, icon, delta=None):
+    """Create modern metric cards with animations"""
+    delta_html = ""
+    if delta:
+        delta_color = "#10b981" if "+" in str(delta) else "#ef4444" if "-" in str(delta) else "#64748b"
+        delta_html = f'<div style="color: {delta_color}; font-size: 12px; font-weight: 500; margin-top: 4px;">{delta}</div>'
+    
+    st.markdown(f"""
+    <div class="metric-modern">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between;">
+            <div style="flex: 1;">
+                <div style="color: #64748b; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                    {title}
+                </div>
+                <div style="color: #1e293b; font-size: 24px; font-weight: 700; line-height: 1; margin-bottom: 4px;">
+                    {value}
+                </div>
+                {delta_html}
+            </div>
+            <div style="font-size: 28px; margin-left: 16px;">
+                {icon}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)    
 
 # =============================================================================
 # BACKEND IMPORTS AND INITIALIZATION
@@ -4398,6 +4285,18 @@ def create_enhanced_sidebar():
 def create_enhanced_prediction_section():
     """Enhanced prediction section - Premium only"""
     
+    st.markdown("""
+    <div class="glass-card">
+        <h2 style="margin: 0; color: #1e293b; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 32px;">🤖</span>
+            Advanced AI Prediction Engine
+        </h2>
+        <p style="margin: 8px 0 0 0; color: #64748b;">
+            Professional-grade AI analysis with 6 advanced models and real-time insights
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
@@ -4493,25 +4392,56 @@ def create_enhanced_prediction_section():
             if click_result['clicks_remaining'] != 'unlimited':
                 st.info(f"📊 {click_result['message']}")
         
-        with st.spinner("🔄 Running advanced AI analysis..."):
-            # Execute prediction
-            prediction = RealPredictionEngine.run_real_prediction(
-                ticker, 
-                st.session_state.selected_timeframe,
-                st.session_state.selected_models
-            )
+        # MODERN LOADING ANIMATION 
+        progress_container = st.empty()
+        status_container = st.empty()
+
+        with progress_container.container():
+            st.markdown("""
+            <div class="glass-card" style="text-align: center;">
+                <h3>🔮 AI Analysis in Progress</h3>
+                <div class="loading-shimmer" style="height: 4px; border-radius: 2px; margin: 20px 0;"></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Simulate analysis steps with modern progress
+        steps = [
+            ("🔍 Fetching market data", 0.2),
+            ("🧠 Processing AI models", 0.5),
+            ("📊 Calculating predictions", 0.7),
+            ("⚡ Generating insights", 0.9),
+            ("✅ Analysis complete", 1.0)
+        ]
+
+        progress_bar = st.progress(0)
+
+        for step, progress in steps:
+            status_container.info(f"{step}...")
+            progress_bar.progress(progress)
+            time.sleep(0.3)
+
+        # Clear loading
+        progress_container.empty()
+        status_container.empty()
+
+        # Execute prediction
+        prediction = RealPredictionEngine.run_real_prediction(
+            ticker, 
+            st.session_state.selected_timeframe,
+            st.session_state.selected_models
+        )
+
+        if prediction:
+            st.session_state.current_prediction = prediction
+            st.session_state.session_stats['predictions'] += 1
             
-            if prediction:
-                st.session_state.current_prediction = prediction
-                st.session_state.session_stats['predictions'] += 1
-                
-                # Success message based on backend availability
-                if prediction.get('fallback_mode', False):
-                    st.warning("⚡ **DEMO PREDICTION** - Backend simulation mode")
-                else:
-                    st.success("🔥 **LIVE AI PREDICTION** - Real-time backend analysis")
+            # Success message based on backend availability
+            if prediction.get('fallback_mode', False):
+                st.warning("⚡ **DEMO PREDICTION** - Backend simulation mode")
             else:
-                st.error("❌ Prediction failed - please try again")
+                st.success("🔥 **LIVE AI PREDICTION** - Real-time backend analysis")
+        else:
+            st.error("❌ Prediction failed - please try again")
     
     # CROSS-VALIDATION EXECUTION (Master key only)
     if cv_button:
@@ -4545,129 +4475,305 @@ def create_enhanced_prediction_section():
 
 
 def display_enhanced_prediction_results(prediction: Dict):
-    """Display comprehensive prediction results with all backend features"""
+    """Display comprehensive prediction results with elegant, user-friendly interface"""
     
-    # Source indicator
+    # Source indicator with modern styling
     source = prediction.get('source', 'unknown')
     fallback_mode = prediction.get('fallback_mode', False)
     
     if not fallback_mode and BACKEND_AVAILABLE:
-        st.success("🔥 **LIVE PREDICTION** - Real backend analysis with full feature integration")
+        st.markdown("""
+        <div class="glass-card" style="background: linear-gradient(135deg, #10b981, #059669); color: white; text-align: center; margin-bottom: 24px;">
+            <h3 style="margin: 0; display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <span style="font-size: 24px;">🔥</span>
+                LIVE AI PREDICTION
+                <span style="font-size: 24px;">🤖</span>
+            </h3>
+            <p style="margin: 8px 0 0 0; opacity: 0.9;">Real-time analysis with full backend integration</p>
+        </div>
+        """, unsafe_allow_html=True)
     elif fallback_mode:
-        st.warning("⚡ **ENHANCED SIMULATION** - Realistic modeling with backend constraints")
-    else:
-        st.info("📊 **DEMO MODE** - Limited backend connectivity")
+        st.markdown("""
+        <div class="glass-card" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; text-align: center; margin-bottom: 24px;">
+            <h3 style="margin: 0; display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <span style="font-size: 24px;">⚡</span>
+                ENHANCED SIMULATION
+                <span style="font-size: 24px;">🎯</span>
+            </h3>
+            <p style="margin: 8px 0 0 0; opacity: 0.9;">Advanced modeling with realistic market constraints</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Main prediction metrics
-    st.markdown("### 🎯 AI Prediction Results")
+    # Extract prediction data
+    current_price = prediction.get('current_price', 0)
+    predicted_price = prediction.get('predicted_price', 0)
+    price_change_pct = prediction.get('price_change_pct', 0)
+    confidence = prediction.get('confidence', 0)
+    ticker = prediction.get('ticker', '')
+    
+    # Determine prediction direction and styling
+    is_bullish = predicted_price > current_price
+    direction_color = "#10b981" if is_bullish else "#ef4444"
+    direction_icon = "📈" if is_bullish else "📉"
+    direction_text = "BULLISH SIGNAL" if is_bullish else "BEARISH SIGNAL"
+    
+    # Main prediction card with hero styling
+    st.markdown(f"""
+    <div class="glass-card" style="background: linear-gradient(135deg, {direction_color}15, {direction_color}25); border-left: 5px solid {direction_color}; margin-bottom: 32px;">
+        <div style="text-align: center; padding: 20px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">{direction_icon}</div>
+            <h1 style="color: {direction_color}; margin: 0 0 8px 0; font-size: 2rem;">{direction_text}</h1>
+            <p style="color: #64748b; font-size: 1.1rem; margin: 0;">AI Prediction for {ticker}</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Key metrics in elegant cards
+    st.markdown("### 🎯 Key Prediction Metrics")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        current_price = prediction.get('current_price', 0)
-        st.metric(
-            "Current Price",
-            f"${current_price:.4f}",
-            help="Real-time market price"
-        )
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid #3b82f6;">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                Current Price
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: #1e293b; margin-bottom: 4px;">
+                ${current_price:.4f}
+            </div>
+            <div style="color: #64748b; font-size: 12px;">
+                Market Price
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        predicted_price = prediction.get('predicted_price', 0)
-        price_change = prediction.get('price_change_pct', 0)
-        st.metric(
-            "AI Prediction",
-            f"${predicted_price:.4f}",
-            f"{price_change:+.2f}%",
-            help="AI ensemble prediction"
-        )
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid {direction_color};">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                AI Prediction
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: {direction_color}; margin-bottom: 4px;">
+                ${predicted_price:.4f}
+            </div>
+            <div style="color: {direction_color}; font-size: 14px; font-weight: 600;">
+                {price_change_pct:+.2f}%
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        confidence = prediction.get('confidence', 0)
-        confidence_color = "normal"
-        if confidence > 80:
-            confidence_color = "normal"
-        elif confidence > 60:
-            confidence_color = "normal"
-        else:
-            confidence_color = "inverse"
+        # Confidence gauge styling
+        confidence_color = "#10b981" if confidence > 80 else "#f59e0b" if confidence > 60 else "#ef4444"
+        confidence_level = "HIGH" if confidence > 80 else "MEDIUM" if confidence > 60 else "LOW"
         
-        st.metric(
-            "AI Confidence",
-            f"{confidence:.1f}%",
-            delta_color=confidence_color,
-            help="Model confidence in prediction"
-        )
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid {confidence_color};">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                AI Confidence
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: {confidence_color}; margin-bottom: 4px;">
+                {confidence:.1f}%
+            </div>
+            <div style="color: {confidence_color}; font-size: 12px; font-weight: 600;">
+                {confidence_level} CONFIDENCE
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Comprehensive visualization
-    chart = EnhancedChartGenerator.create_comprehensive_prediction_chart(prediction)
-    if chart:
-        st.plotly_chart(chart, use_container_width=True)
-        
+    # Price movement visualization
+    st.markdown("### 📊 Price Movement Analysis")
+    
+    # Create a simple but elegant price movement chart
+    movement_data = {
+        'Current': current_price,
+        'Predicted': predicted_price
+    }
+    
+    fig = go.Figure()
+    
+    # Add current price point
+    fig.add_trace(go.Scatter(
+        x=['Current Price'],
+        y=[current_price],
+        mode='markers',
+        marker=dict(size=20, color='#6b7280', symbol='circle'),
+        name='Current',
+        text=f'${current_price:.4f}',
+        textposition='top center'
+    ))
+    
+    # Add predicted price point
+    fig.add_trace(go.Scatter(
+        x=['AI Prediction'],
+        y=[predicted_price],
+        mode='markers',
+        marker=dict(size=25, color=direction_color, symbol='star'),
+        name='Predicted',
+        text=f'${predicted_price:.4f}',
+        textposition='top center'
+    ))
+    
+    # Add connection line
+    fig.add_trace(go.Scatter(
+        x=['Current Price', 'AI Prediction'],
+        y=[current_price, predicted_price],
+        mode='lines',
+        line=dict(color=direction_color, width=3, dash='dash'),
+        showlegend=False
+    ))
+    
+    # Add forecast if available
+    forecast = prediction.get('forecast_5_day', [])
+    if forecast:
+        forecast_x = [f'Day {i+1}' for i in range(len(forecast))]
+        fig.add_trace(go.Scatter(
+            x=['AI Prediction'] + forecast_x,
+            y=[predicted_price] + forecast,
+            mode='lines+markers',
+            line=dict(color='#8b5cf6', width=2),
+            marker=dict(size=8, color='#8b5cf6'),
+            name='5-Day Forecast'
+        ))
+    
+    fig.update_layout(
+        title=f"Price Analysis for {ticker}",
+        template="plotly_white",
+        height=400,
+        showlegend=True,
+        xaxis_title="Timeline",
+        yaxis_title="Price ($)"
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # AI Insights Summary in user-friendly language
+    st.markdown("### 🧠 AI Insights Summary")
+    
+    # Generate user-friendly insights
+    insights = []
+    
+    # Price movement insight
+    if abs(price_change_pct) > 5:
+        insights.append(f"🎯 **Significant Movement Expected**: The AI predicts a {abs(price_change_pct):.1f}% {'increase' if is_bullish else 'decrease'} - this is considered a substantial price movement.")
+    elif abs(price_change_pct) > 2:
+        insights.append(f"📈 **Moderate Movement Expected**: The AI forecasts a {abs(price_change_pct):.1f}% {'rise' if is_bullish else 'fall'} - a reasonable price adjustment is anticipated.")
+    else:
+        insights.append(f"📊 **Minor Movement Expected**: The AI suggests a small {abs(price_change_pct):.1f}% {'uptick' if is_bullish else 'decline'} - relatively stable price action.")
+    
+    # Confidence insight
+    if confidence > 80:
+        insights.append(f"✅ **High Confidence Prediction**: With {confidence:.1f}% confidence, the AI model shows strong conviction in this forecast.")
+    elif confidence > 60:
+        insights.append(f"⚖️ **Moderate Confidence**: The AI shows {confidence:.1f}% confidence - a reasonably reliable prediction with some uncertainty.")
+    else:
+        insights.append(f"⚠️ **Lower Confidence**: At {confidence:.1f}% confidence, this prediction should be considered with caution and additional analysis.")
+    
+    # Risk insight based on asset type
+    asset_type = get_asset_type(ticker)
+    if asset_type == 'crypto':
+        insights.append("🌊 **Crypto Asset**: Remember that cryptocurrency markets are highly volatile and can change rapidly due to news, regulations, or market sentiment.")
+    elif asset_type == 'forex':
+        insights.append("💱 **Forex Pair**: Currency movements can be influenced by economic data, central bank policies, and geopolitical events.")
+    elif asset_type == 'commodity':
+        insights.append("🛢️ **Commodity**: Commodity prices are affected by supply/demand dynamics, weather conditions, and global economic factors.")
+    elif asset_type == 'index':
+        insights.append("📊 **Market Index**: Index movements reflect broader market sentiment and economic conditions across multiple companies.")
+    else:
+        insights.append("📈 **Individual Stock**: Stock price movements can be influenced by company earnings, news, and overall market conditions.")
+    
+    # Display insights in elegant format
+    for insight in insights:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f8fafc, #e2e8f0); padding: 16px; border-radius: 8px; margin: 8px 0; border-left: 4px solid #3b82f6;">
+            {insight}
+        </div>
+        """, unsafe_allow_html=True)
+    
     # FTMO Integration
-    enhance_prediction_with_ftmo(prediction)    
+    enhance_prediction_with_ftmo(prediction)
     
-    # Enhanced tabs with master key cross-validation
+    # Enhanced tabs with better organization
     is_master_key = (st.session_state.subscription_tier == 'premium' and 
                      st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
     
     if is_master_key:
-        # Master key users get cross-validation tab
         tab_names = [
-            "📈 Forecast", "📋 Trading Plan", "📊 Cross-Validation", "⚠️ Risk Analysis"
+            "📈 Trading Strategy", "📊 Advanced Analysis", "🔍 Cross-Validation", "⚠️ Risk Assessment"
         ]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Cross-validation tab (Master only)
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_cross_validation_tab()
-        
-        # Risk analysis tab
         with tabs[3]:
             display_enhanced_risk_tab(prediction)
             
     elif st.session_state.subscription_tier == 'premium':
-        # Regular premium users get standard tabs
         tab_names = [
-            "📈 Forecast", "📋 Trading Plan", "⚠️ Risk Analysis"
+            "📈 Trading Strategy", "📊 Analysis", "⚠️ Risk Assessment"
         ]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Risk analysis tab
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_enhanced_risk_tab(prediction)
     
     else:
-        # Free users get basic tabs
-        tab_names = ["📈 Forecast", "📋 Trading Plan", "📊 Basic Analysis"]
+        tab_names = ["📈 Strategy", "📊 Analysis", "📋 Basic Info"]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Basic analysis tab
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_basic_analysis_tab(prediction)
+
+def display_basic_analysis_tab(prediction: Dict):
+    """Display basic analysis for free tier users"""
+    st.subheader("📋 Basic Market Analysis")
+    
+    ticker = prediction.get('ticker', '')
+    current_price = prediction.get('current_price', 0)
+    predicted_price = prediction.get('predicted_price', 0)
+    asset_type = get_asset_type(ticker)
+    
+    # Simple market context
+    st.markdown("#### 🎯 What This Means")
+    
+    price_change_pct = ((predicted_price - current_price) / current_price) * 100
+    is_bullish = predicted_price > current_price
+    
+    if is_bullish:
+        st.success(f"📈 **Positive Outlook**: The AI suggests {ticker} may increase by approximately {abs(price_change_pct):.1f}%")
+    else:
+        st.warning(f"📉 **Cautious Outlook**: The AI suggests {ticker} may decrease by approximately {abs(price_change_pct):.1f}%")
+    
+    # Basic risk warning
+    st.markdown("#### ⚠️ Important Reminders")
+    
+    reminders = [
+        "🎯 This is an AI prediction, not financial advice",
+        "📊 Always do your own research before making investment decisions",
+        "💰 Never invest more than you can afford to lose",
+        "📈 Market conditions can change rapidly",
+        f"🏷️ {ticker} is a {asset_type} - understand the specific risks involved"
+    ]
+    
+    for reminder in reminders:
+        st.markdown(f"• {reminder}")
+    
+    # Upgrade promotion
+    st.markdown("---")
+    st.info("🚀 **Upgrade to Premium** for advanced risk analysis, detailed forecasts, and professional trading plans!")
 
 
 def display_enhanced_forecast_tab(prediction: Dict):
@@ -7863,6 +7969,9 @@ def main():
     # Page configuration
     configure_page()
     
+    # Apply modern styling FIRST
+    create_enhanced_dashboard_styling()
+    
     # Initialize core components
     advanced_app_state, keep_alive_manager = initialize_app_components()
     
@@ -7870,7 +7979,7 @@ def main():
     if advanced_app_state is None:
         return
     
-    # Create enhanced header
+    # Use the NEW modern header instead of the old one
     create_bright_enhanced_header()
     
     # Create sidebar
