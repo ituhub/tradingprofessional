@@ -4155,7 +4155,7 @@ def create_enhanced_sidebar():
                 "Enter Premium Key",
                 type="password",
                 value=st.session_state.premium_key,
-                help="Enter 'Prem246_357' for full access"
+                help="Enter 'Prem246_135' for full access"
             )
             
             if st.button("🚀 Activate Premium", type="primary"):
