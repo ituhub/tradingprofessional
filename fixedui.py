@@ -313,7 +313,7 @@ class PremiumKeyManager:
     """Manages premium keys with click limits and expiration"""
     
     # Master key (your personal key) - unlimited access
-    MASTER_KEY = "Prem246_357"
+    MASTER_KEY = "Prem246_135"
     
     # Customer premium keys with 20 clicks each - UPDATED EXPIRATION DATES
     CUSTOMER_KEYS = {
