@@ -317,7 +317,7 @@ class PremiumKeyManager:
     
     # Customer premium keys with 20 clicks each - UPDATED EXPIRATION DATES
     CUSTOMER_KEYS = {
-        "PremPro_8K9L2M": {
+        "PremPro_5K9L2M": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -325,7 +325,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Customer Key - 20 Predictions"
         },
-        "PremElite_7N4P5Q": {
+        "PremElite_5N4P5Q": {
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -333,7 +333,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Elite Key - 20 Predictions"
         },
-        "PremMax_6R8S9T": {
+        "PremMax_5R8S9T": {
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
@@ -349,7 +349,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Ultra Key - 20 Predictions"
         },
-        "PremAdvanced_4X1Y3Z": {
+        "PremAdvanced_5X1Y3Z": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -357,7 +357,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Advanced Key - 20 Predictions"
         },
-        "PremSuper_3A6B9C": {
+        "PremSuper_5A6B9C": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -365,7 +365,7 @@ class PremiumKeyManager:
             "features": "all_premium", 
             "description": "Premium Super Key - 20 Predictions"
         },
-        "PremTurbo_2D5E8F": {
+        "PremTurbo_5D5E8F": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -373,7 +373,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Turbo Key - 20 Predictions"
         },
-        "PremPower_1G4H7I": {
+        "PremPower_5G4H7I": {
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -381,7 +381,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Power Key - 20 Predictions"
         },
-        "PremPlus_9J2K5L": {
+        "PremPlus_5J2K5L": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
@@ -389,7 +389,7 @@ class PremiumKeyManager:
             "features": "all_premium",
             "description": "Premium Plus Key - 20 Predictions"
         },
-        "PremBoost_8M1N4O": {
+        "PremBoost_5M1N4O": {
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
