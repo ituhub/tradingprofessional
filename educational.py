@@ -1,8 +1,7 @@
 """
-EDUCATIONAL AI TRADING PLATFORM - LEARNING & SIMULATION TOOL
+FULLY INTEGRATED AI TRADING PROFESSIONAL - COMPLETE BACKEND INTEGRATION
 ==============================================================================
-This is an educational platform for learning AI trading concepts and techniques.
-NOT FOR REAL TRADING - EDUCATIONAL PURPOSES ONLY
+This version integrates EVERY backend feature for maximum performance
 """
 
 import os
@@ -22,8 +21,6 @@ import sys
 import io
 import queue
 import traceback
-import MetaTrader5 as mt5
-from enum import Enum
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
@@ -60,441 +57,6 @@ logging.basicConfig(
 
 # Create logger instance
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TradeSignal:
-    """Trade signal from the AI app"""
-    symbol: str
-    action: str  # 'BUY', 'SELL', 'CLOSE'
-    volume: float
-    price: float
-    sl: float  # Stop Loss
-    tp: float  # Take Profit
-    confidence: float
-    timestamp: datetime
-    signal_id: str
-    comment: str = ""
-
-class MT5ConnectionStatus(Enum):
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    ERROR = "error"
-
-class MT5AutoTrader:
-    """Advanced MT5 Auto Trading System"""
-    
-    def __init__(self, 
-                 account: int,
-                 password: str,
-                 server: str,
-                 path: str = None,
-                 enable_auto_trading: bool = False):
-        
-        self.account = account
-        self.password = password
-        self.server = server
-        self.path = path
-        self.enable_auto_trading = enable_auto_trading
-        
-        # Connection status
-        self.connection_status = MT5ConnectionStatus.DISCONNECTED
-        self.last_connection_attempt = None
-        
-        # Trading parameters
-        self.magic_number = 123456  # Unique identifier for our EA
-        self.max_risk_per_trade = 0.02  # 2% max risk per trade
-        self.max_daily_trades = 10
-        self.min_confidence_threshold = 70.0
-        
-        # Performance tracking
-        self.trades_today = 0
-        self.total_trades = 0
-        self.winning_trades = 0
-        self.total_pnl = 0.0
-        self.daily_pnl = 0.0
-        
-        # Active positions
-        self.active_positions: Dict[str, Dict] = {}
-        
-        # Signal queue
-        self.signal_queue: List[TradeSignal] = []
-        
-        # Logging
-        self.logger = logging.getLogger('MT5AutoTrader')
-        
-        # Threading
-        self.trading_thread = None
-        self.is_running = False
-        
-    def initialize_connection(self) -> bool:
-        """Initialize connection to MT5"""
-        try:
-            self.connection_status = MT5ConnectionStatus.CONNECTING
-            self.last_connection_attempt = datetime.now()
-            
-            # Initialize MT5
-            if not mt5.initialize(path=self.path):
-                self.logger.error(f"MT5 initialize() failed, error code: {mt5.last_error()}")
-                self.connection_status = MT5ConnectionStatus.ERROR
-                return False
-            
-            # Login to account
-            if not mt5.login(self.account, password=self.password, server=self.server):
-                self.logger.error(f"Failed to connect to account #{self.account}, error code: {mt5.last_error()}")
-                self.connection_status = MT5ConnectionStatus.ERROR
-                return False
-            
-            self.connection_status = MT5ConnectionStatus.CONNECTED
-            self.logger.info(f"Successfully connected to MT5 account: {self.account}")
-            
-            # Get account info
-            account_info = mt5.account_info()
-            if account_info:
-                self.logger.info(f"Account balance: {account_info.balance}")
-                self.logger.info(f"Account equity: {account_info.equity}")
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error initializing MT5 connection: {e}")
-            self.connection_status = MT5ConnectionStatus.ERROR
-            return False
-    
-    def start_auto_trading(self):
-        """Start the auto trading system"""
-        if not self.is_running:
-            self.is_running = True
-            self.trading_thread = threading.Thread(target=self._trading_loop, daemon=True)
-            self.trading_thread.start()
-            self.logger.info("Auto trading system started")
-    
-    def stop_auto_trading(self):
-        """Stop the auto trading system"""
-        self.is_running = False
-        if self.trading_thread:
-            self.trading_thread.join(timeout=5)
-        self.logger.info("Auto trading system stopped")
-    
-    def add_signal(self, signal: TradeSignal):
-        """Add a trading signal to the queue"""
-        if self.enable_auto_trading and signal.confidence >= self.min_confidence_threshold:
-            self.signal_queue.append(signal)
-            self.logger.info(f"Added signal: {signal.action} {signal.symbol} @ {signal.price}")
-    
-    def _trading_loop(self):
-        """Main trading loop"""
-        while self.is_running:
-            try:
-                # Check connection
-                if self.connection_status != MT5ConnectionStatus.CONNECTED:
-                    if not self.initialize_connection():
-                        time.sleep(30)  # Wait before retry
-                        continue
-                
-                # Process signals
-                self._process_signals()
-                
-                # Monitor positions
-                self._monitor_positions()
-                
-                # Update performance metrics
-                self._update_performance()
-                
-                # Sleep before next iteration
-                time.sleep(1)
-                
-            except Exception as e:
-                self.logger.error(f"Error in trading loop: {e}")
-                time.sleep(5)
-    
-    def _process_signals(self):
-        """Process trading signals from the queue"""
-        while self.signal_queue and self.trades_today < self.max_daily_trades:
-            signal = self.signal_queue.pop(0)
-            
-            try:
-                if signal.action in ['BUY', 'SELL']:
-                    self._execute_trade(signal)
-                elif signal.action == 'CLOSE':
-                    self._close_position(signal.symbol)
-                    
-            except Exception as e:
-                self.logger.error(f"Error processing signal: {e}")
-    
-    def _execute_trade(self, signal: TradeSignal) -> bool:
-        """Execute a trade based on the signal"""
-        try:
-            # Get symbol info
-            symbol_info = mt5.symbol_info(signal.symbol)
-            if not symbol_info:
-                self.logger.error(f"Symbol {signal.symbol} not found")
-                return False
-            
-            # Check if symbol is available for trading
-            if not symbol_info.visible:
-                mt5.symbol_select(signal.symbol, True)
-            
-            # Calculate position size based on risk management
-            position_size = self._calculate_position_size(signal)
-            
-            # Prepare the trade request
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": signal.symbol,
-                "volume": position_size,
-                "type": mt5.ORDER_TYPE_BUY if signal.action == 'BUY' else mt5.ORDER_TYPE_SELL,
-                "price": signal.price,
-                "sl": signal.sl,
-                "tp": signal.tp,
-                "deviation": 20,
-                "magic": self.magic_number,
-                "comment": f"AI_Signal_{signal.signal_id}",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            
-            # Send the trade request
-            result = mt5.order_send(request)
-            
-            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                self.logger.info(f"Trade executed: {signal.action} {position_size} {signal.symbol} @ {result.price}")
-                
-                # Track the position
-                self.active_positions[signal.symbol] = {
-                    'ticket': result.order,
-                    'signal': signal,
-                    'open_time': datetime.now(),
-                    'open_price': result.price,
-                    'volume': position_size
-                }
-                
-                self.trades_today += 1
-                self.total_trades += 1
-                return True
-            else:
-                self.logger.error(f"Trade failed: {result.retcode if result else 'No result'}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error executing trade: {e}")
-            return False
-    
-    def _calculate_position_size(self, signal: TradeSignal) -> float:
-        """Calculate position size based on risk management"""
-        try:
-            account_info = mt5.account_info()
-            if not account_info:
-                return 0.01  # Minimum lot size
-            
-            # Get symbol info
-            symbol_info = mt5.symbol_info(signal.symbol)
-            if not symbol_info:
-                return 0.01
-            
-            # Calculate risk amount
-            risk_amount = account_info.equity * self.max_risk_per_trade
-            
-            # Calculate stop loss distance in points
-            if signal.action == 'BUY':
-                sl_distance = abs(signal.price - signal.sl)
-            else:
-                sl_distance = abs(signal.sl - signal.price)
-            
-            if sl_distance == 0:
-                return 0.01
-            
-            # Calculate position size
-            tick_value = symbol_info.trade_tick_value
-            position_size = risk_amount / (sl_distance * tick_value)
-            
-            # Apply minimum and maximum limits
-            min_lot = symbol_info.volume_min
-            max_lot = min(symbol_info.volume_max, account_info.equity / 1000)  # Conservative max
-            
-            position_size = max(min_lot, min(position_size, max_lot))
-            
-            # Round to lot step
-            lot_step = symbol_info.volume_step
-            position_size = round(position_size / lot_step) * lot_step
-            
-            return position_size
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating position size: {e}")
-            return 0.01
-    
-    def _monitor_positions(self):
-        """Monitor active positions"""
-        try:
-            positions = mt5.positions_get()
-            if positions is None:
-                return
-            
-            current_positions = {pos.symbol: pos for pos in positions if pos.magic == self.magic_number}
-            
-            # Update active positions tracking
-            for symbol in list(self.active_positions.keys()):
-                if symbol not in current_positions:
-                    # Position was closed
-                    self._handle_position_closed(symbol)
-            
-        except Exception as e:
-            self.logger.error(f"Error monitoring positions: {e}")
-    
-    def _handle_position_closed(self, symbol: str):
-        """Handle when a position is closed"""
-        if symbol in self.active_positions:
-            position_info = self.active_positions[symbol]
-            
-            # Get deals to calculate P&L
-            deals = mt5.history_deals_get(
-                position_info['open_time'],
-                datetime.now(),
-                group=symbol
-            )
-            
-            if deals:
-                for deal in deals:
-                    if deal.magic == self.magic_number and deal.symbol == symbol:
-                        if deal.profit != 0:  # Closing deal
-                            if deal.profit > 0:
-                                self.winning_trades += 1
-                            
-                            self.total_pnl += deal.profit
-                            self.daily_pnl += deal.profit
-                            
-                            self.logger.info(f"Position closed: {symbol}, P&L: {deal.profit}")
-            
-            # Remove from active positions
-            del self.active_positions[symbol]
-    
-    def _update_performance(self):
-        """Update performance metrics"""
-        try:
-            account_info = mt5.account_info()
-            if account_info:
-                # Reset daily metrics if new day
-                current_date = datetime.now().date()
-                if not hasattr(self, 'last_update_date') or self.last_update_date != current_date:
-                    self.trades_today = 0
-                    self.daily_pnl = 0.0
-                    self.last_update_date = current_date
-                    
-        except Exception as e:
-            self.logger.error(f"Error updating performance: {e}")
-    
-    def get_performance_report(self) -> Dict:
-        """Get comprehensive performance report"""
-        try:
-            account_info = mt5.account_info()
-            
-            win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
-            
-            return {
-                'account_balance': account_info.balance if account_info else 0,
-                'account_equity': account_info.equity if account_info else 0,
-                'total_trades': self.total_trades,
-                'winning_trades': self.winning_trades,
-                'win_rate': win_rate,
-                'total_pnl': self.total_pnl,
-                'daily_pnl': self.daily_pnl,
-                'trades_today': self.trades_today,
-                'active_positions': len(self.active_positions),
-                'connection_status': self.connection_status.value,
-                'last_update': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting performance report: {e}")
-            return {}
-    
-    def close_all_positions(self):
-        """Close all open positions"""
-        try:
-            positions = mt5.positions_get()
-            if positions:
-                for position in positions:
-                    if position.magic == self.magic_number:
-                        self._close_position_by_ticket(position.ticket)
-                        
-        except Exception as e:
-            self.logger.error(f"Error closing all positions: {e}")
-    
-    def _close_position_by_ticket(self, ticket: int):
-        """Close position by ticket number"""
-        try:
-            position = mt5.positions_get(ticket=ticket)
-            if not position:
-                return False
-            
-            position = position[0]
-            
-            if position.type == mt5.POSITION_TYPE_BUY:
-                order_type = mt5.ORDER_TYPE_SELL
-            else:
-                order_type = mt5.ORDER_TYPE_BUY
-            
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": position.symbol,
-                "volume": position.volume,
-                "type": order_type,
-                "position": ticket,
-                "magic": self.magic_number,
-                "comment": "Close by AI system",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            
-            result = mt5.order_send(request)
-            return result and result.retcode == mt5.TRADE_RETCODE_DONE
-            
-        except Exception as e:
-            self.logger.error(f"Error closing position {ticket}: {e}")
-            return False
-
-# Create MT5 performance display in MT5
-class MT5PerformanceDisplay:
-    """Display AI app performance in MT5 as custom indicators"""
-    
-    def __init__(self, mt5_trader: MT5AutoTrader):
-        self.mt5_trader = mt5_trader
-        
-    def create_performance_chart(self, symbol: str = "EURUSD"):
-        """Create performance chart in MT5"""
-        try:
-            # Get historical performance data
-            performance_data = self._get_historical_performance()
-            
-            # Create custom indicator data
-            # This would require MQL5 EA to display
-            indicator_data = {
-                'equity_curve': performance_data['equity_values'],
-                'win_rate': performance_data['win_rates'],
-                'daily_pnl': performance_data['daily_pnls'],
-                'timestamps': performance_data['timestamps']
-            }
-            
-            return indicator_data
-            
-        except Exception as e:
-            print(f"Error creating performance chart: {e}")
-            return None
-    
-    def _get_historical_performance(self) -> Dict:
-        """Get historical performance data"""
-        # This would fetch historical data from your database
-        # For now, return sample data
-        dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-        
-        return {
-            'timestamps': dates.tolist(),
-            'equity_values': np.random.cumsum(np.random.randn(30) * 100) + 10000,
-            'win_rates': np.random.uniform(45, 75, 30),
-            'daily_pnls': np.random.randn(30) * 200
-        }
 
 
 @dataclass
@@ -751,33 +313,33 @@ class PremiumKeyManager:
     """Manages premium keys with click limits and expiration"""
     
     # Master key (your personal key) - unlimited access
-    MASTER_KEY = "Prem246_357"
+    MASTER_KEY = "Prem246_135"
     
     # Customer premium keys with 20 clicks each - UPDATED EXPIRATION DATES
     CUSTOMER_KEYS = {
-        "PremPro_8K9L2M": {
+        "PremPro_5K9L2M": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Customer Key - 20 Predictions"
         },
-        "PremElite_7N4P5Q": {
+        "PremElite_5N4P5Q": {
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Elite Key - 20 Predictions"
         },
-        "PremMax_6R8S9T": {
+        "PremMax_5R8S9T": {
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Max Key - 20 Predictions"
         },
         "PremUltra_5U2V7W": {
             "type": "customer",
@@ -785,55 +347,55 @@ class PremiumKeyManager:
             "clicks_remaining": 20, 
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Ultra Key - 20 Predictions"
         },
-        "PremAdvanced_4X1Y3Z": {
+        "PremAdvanced_5X1Y3Z": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Advanced Key - 20 Predictions"
         },
-        "PremSuper_3A6B9C": {
+        "PremSuper_5A6B9C": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium", 
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Super Key - 20 Predictions"
         },
-        "PremTurbo_2D5E8F": {
+        "PremTurbo_5D5E8F": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Turbo Key - 20 Predictions"
         },
-        "PremPower_1G4H7I": {
+        "PremPower_5G4H7I": {
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Power Key - 20 Predictions"
         },
-        "PremPlus_9J2K5L": {
+        "PremPlus_5J2K5L": {
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Plus Key - 20 Predictions"
         },
-        "PremBoost_8M1N4O": {
+        "PremBoost_5M1N4O": {
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
             "expires": "2025-12-31",  # Updated to 2025
             "features": "all_premium",
-            "description": "Educational Premium Access - 20 Learning Sessions"
+            "description": "Premium Boost Key - 20 Predictions"
         }
     }
     
@@ -1144,11 +706,12 @@ class AppKeepAlive:
         self.active = False
 
 def initialize_session_state():
-    """Fallback session state initialization"""
+    """Initialize session state - Premium only"""
     if 'initialized' not in st.session_state:
         st.session_state.initialized = True
-        st.session_state.subscription_tier = 'free'
+        st.session_state.subscription_tier = 'none'  # Changed from 'free' to 'none'
         st.session_state.premium_key = ''
+        st.session_state.disclaimer_consented = False
         st.session_state.selected_ticker = '^GSPC'
         st.session_state.selected_timeframe = '1day'
         st.session_state.current_prediction = None
@@ -1551,6 +1114,269 @@ class EnhancedAnalyticsSuite:
         return regime_descriptions.get(regime_name, "Market regime characteristics not fully defined.")
 
 
+def create_enhanced_dashboard_styling():
+    """Modern Material Design styling with glassmorphism effects"""
+    st.markdown("""
+    <style>
+    /* Import Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    /* Global Variables */
+    :root {
+        --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        --success-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        --warning-gradient: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        --glass-bg: rgba(255, 255, 255, 0.1);
+        --glass-border: rgba(255, 255, 255, 0.2);
+        --shadow-soft: 0 8px 32px rgba(31, 38, 135, 0.15);
+        --shadow-medium: 0 12px 40px rgba(31, 38, 135, 0.2);
+    }
+    
+    /* Modern App Background */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Main Content Container */
+    .main .block-container {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 20px;
+        padding: 2rem;
+        margin: 1rem 0;
+        box-shadow: var(--shadow-soft);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
+    }
+    
+    /* Glassmorphism Cards */
+    .glass-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border);
+        border-radius: 20px;
+        box-shadow: var(--shadow-soft);
+        padding: 24px;
+        margin: 16px 0;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .glass-card:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--shadow-medium);
+        border-color: rgba(102, 126, 234, 0.3);
+    }
+    
+    /* Modern Metrics */
+    .metric-modern {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        border-left: 4px solid transparent;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+        margin: 12px 0;
+    }
+    
+    .metric-modern::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--primary-gradient);
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+    }
+    
+    .metric-modern:hover::before {
+        transform: translateX(0);
+    }
+    
+    .metric-modern:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+    }
+    
+    /* Enhanced Buttons */
+    .stButton > button {
+        background: var(--primary-gradient);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 24px;
+        font-weight: 500;
+        font-size: 14px;
+        text-transform: none;
+        letter-spacing: 0.5px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stButton > button::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        transition: left 0.5s;
+    }
+    
+    .stButton > button:hover::before {
+        left: 100%;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Primary Button Variant */
+    .stButton > button[kind="primary"] {
+        background: var(--success-gradient);
+        box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+    }
+    
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.5);
+    }
+    
+    /* Modern Sidebar */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #2c3e50 0%, #3498db 100%);
+        border-right: none;
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Enhanced Metrics Display */
+    [data-testid="metric-container"] {
+        background: linear-gradient(135deg, #ffffff, #f8f9fa);
+        border: 1px solid #e9ecef;
+        border-radius: 16px;
+        padding: 1.2rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
+        margin: 8px 0;
+    }
+    
+    [data-testid="metric-container"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+        border-color: rgba(102, 126, 234, 0.3);
+    }
+    
+    /* Charts Enhancement */
+    .js-plotly-plot {
+        border-radius: 16px !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+        overflow: hidden !important;
+        margin: 16px 0 !important;
+        background: white !important;
+    }
+    
+    /* Tabs Modernization */
+    .stTabs [data-baseweb="tab-list"] {
+        background: white;
+        border-radius: 12px;
+        padding: 4px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        gap: 4px;
+        border: none;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        border-radius: 8px;
+        color: #64748b;
+        font-weight: 500;
+        padding: 12px 20px;
+        transition: all 0.2s ease;
+        border: none;
+    }
+    
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: var(--primary-gradient);
+        color: white;
+        box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
+    }
+    
+    /* Mobile Responsiveness */
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 12px;
+        }
+        
+        .glass-card {
+            padding: 16px;
+            margin: 8px 0;
+            border-radius: 12px;
+        }
+        
+        .metric-modern {
+            padding: 16px;
+            margin: 8px 0;
+        }
+        
+        .stButton > button {
+            width: 100%;
+            margin: 4px 0;
+        }
+    }
+        
+    /* Loading Animations */
+    @keyframes shimmer {
+    0% { background-position: -468px 0; }
+    100% { background-position: 468px 0; }
+    }
+
+    .loading-shimmer {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 468px 100px;
+    animation: shimmer 1.5s infinite;
+    border-radius: 8px;
+    height: 20px;
+    margin: 8px 0;
+    }
+
+    /* Status Pills */
+    .status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-radius: 50px;
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    }
+
+    .status-live {
+    background: var(--success-gradient);
+    color: white;
+    }
+
+    .status-demo {
+    background: var(--warning-gradient);
+    color: white;
+    }
+    
+    </style>
+    """, unsafe_allow_html=True)
+
+    
 def create_admin_panel():
     """Enhanced admin panel for master key users with key management"""
     st.header("🔧 Admin Panel")
@@ -1836,58 +1662,93 @@ def create_admin_panel():
                 except Exception as e:
                     st.error(f"❌ Error clearing data: {e}")        
     
-    
-def create_bright_enhanced_header():
-    """Modern header replacing the old bright header"""
-    apply_unified_dashboard_styling()
-    create_modern_header()
-    
-    
-def initialize_dashboard_components():
-    """Initialize all dashboard components properly"""
-    try:
-        # FTMO Integration
-        if 'ftmo_tracker' not in st.session_state:
-            st.session_state.ftmo_tracker = None
-            st.session_state.ftmo_setup_done = False
-        
-        # MT5 Integration
-        if 'mt5_integration' not in st.session_state:
-            st.session_state.mt5_integration = None
-            st.session_state.mt5_connected = False
-            st.session_state.mt5_trader = None
-        
-        # Analytics Suite
-        if 'analytics_suite' not in st.session_state:
-            st.session_state.analytics_suite = EnhancedAnalyticsSuite()
-        
-        # Model explanations cache
-        if 'model_explanations_cache' not in st.session_state:
-            st.session_state.model_explanations_cache = {}
-        
-        # Real-time data refresh timestamp
-        if 'last_data_refresh' not in st.session_state:
-            st.session_state.last_data_refresh = datetime.now()
-        
-        logger.info("✅ Dashboard components initialized successfully")
-        
-    except Exception as e:
-        logger.error(f"Error initializing dashboard components: {e}")
 
-def validate_session_state():
-    """Validate and repair session state if needed"""
-    required_keys = [
-        'subscription_tier', 'premium_key', 'selected_ticker', 
-        'selected_timeframe', 'session_stats', 'real_time_prices'
-    ]
+def create_bright_enhanced_header():
+    """Modern professional header with live status indicators"""
+    st.markdown("""
+    <div class="glass-card" style="text-align: center; margin-bottom: 32px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div style="background: var(--primary-gradient); padding: 16px; border-radius: 16px;">
+                    <span style="font-size: 32px;">🚀</span>
+                </div>
+                <div style="text-align: left;">
+                    <h1 style="margin: 0; background: var(--primary-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; font-size: 2.5rem;">
+                        AI Trading Professional
+                    </h1>
+                    <p style="margin: 4px 0 0 0; color: #64748b; font-weight: 500; font-size: 1.1rem;">
+                        Advanced AI • Real-time Analysis • Professional Trading
+                    </p>
+                </div>
+            </div>
+            <div class="status-pill status-live">
+                <span style="margin-right: 8px;">●</span>
+                PREMIUM ACTIVE
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    for key in required_keys:
-        if key not in st.session_state:
-            logger.warning(f"Missing session state key: {key}")
-            # Reinitialize
-            initialize_session_state()
-            break    
+    # Modern status indicators
+    col1, col2, col3, col4 = st.columns(4)
     
+    with col1:
+        create_status_card("Market", "OPEN", "🟢", True)
+    with col2:
+        create_status_card("Backend", "LIVE", "🟢", BACKEND_AVAILABLE)
+    with col3:
+        create_status_card("Data Feed", "ACTIVE", "🟢", True)
+    with col4:
+        create_status_card("AI Models", "6", "🤖", True)
+    
+    st.markdown("---")
+
+
+def create_status_card(label, value, icon, is_active):
+    """Create modern status indicator cards"""
+    status_class = "border-left: 4px solid #10b981" if is_active else "border-left: 4px solid #ef4444"
+    st.markdown(f"""
+    <div class="metric-modern" style="{status_class}">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <div style="color: #64748b; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;">
+                    {label}
+                </div>
+                <div style="color: #1e293b; font-size: 18px; font-weight: 600; margin-top: 4px;">
+                    {value}
+                </div>
+            </div>
+            <div style="font-size: 24px;">{icon}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    
+def create_modern_metric(title, value, icon, delta=None):
+    """Create modern metric cards with animations"""
+    delta_html = ""
+    if delta:
+        delta_color = "#10b981" if "+" in str(delta) else "#ef4444" if "-" in str(delta) else "#64748b"
+        delta_html = f'<div style="color: {delta_color}; font-size: 12px; font-weight: 500; margin-top: 4px;">{delta}</div>'
+    
+    st.markdown(f"""
+    <div class="metric-modern">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between;">
+            <div style="flex: 1;">
+                <div style="color: #64748b; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                    {title}
+                </div>
+                <div style="color: #1e293b; font-size: 24px; font-weight: 700; line-height: 1; margin-bottom: 4px;">
+                    {value}
+                </div>
+                {delta_html}
+            </div>
+            <div style="font-size: 28px; margin-left: 16px;">
+                {icon}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)    
 
 # =============================================================================
 # BACKEND IMPORTS AND INITIALIZATION
@@ -3276,149 +3137,6 @@ def display_training_cv_results(cv_results: Dict):
     cv_chart = EnhancedChartGenerator.create_cross_validation_chart(cv_results)
     if cv_chart:
         st.plotly_chart(cv_chart, use_container_width=True)
-        
-        
-def run_model_explanation(ticker: str) -> Dict:
-    """Fixed model explanation function"""
-    try:
-        # Check cache first
-        cache_key = f"{ticker}_explanations"
-        if cache_key in st.session_state.model_explanations_cache:
-            cached_time = st.session_state.model_explanations_cache[cache_key].get('timestamp')
-            if cached_time and (datetime.now() - datetime.fromisoformat(cached_time)).seconds < 3600:
-                return st.session_state.model_explanations_cache[cache_key]
-        
-        trained_models = st.session_state.models_trained.get(ticker, {})
-        
-        if not trained_models:
-            return {
-                'error': 'No trained models available for explanation',
-                'models_found': 0
-            }
-        
-        explanations = {}
-        
-        # Feature names for explanation
-        feature_names = [
-            'Close_Price', 'Volume', 'RSI_14', 'MACD_Signal', 
-            'BB_Position', 'SMA_20', 'EMA_12', 'Momentum',
-            'Price_Change', 'Volume_SMA', 'Volatility', 'Trend_Strength'
-        ]
-        
-        for model_name in trained_models.keys():
-            try:
-                # Generate realistic feature importance
-                importance_weights = np.random.dirichlet([2, 1.5, 1.2, 1, 0.8, 0.6, 0.5, 0.4, 0.3, 0.2, 0.2, 0.1])
-                
-                feature_importance = {}
-                for i, feature in enumerate(feature_names):
-                    if i < len(importance_weights):
-                        feature_importance[feature] = float(importance_weights[i])
-                    else:
-                        feature_importance[feature] = float(np.random.uniform(0.01, 0.05))
-                
-                # Sort by importance
-                sorted_features = sorted(
-                    feature_importance.items(), 
-                    key=lambda x: x[1], 
-                    reverse=True
-                )
-                
-                explanations[model_name] = {
-                    'feature_importance': dict(sorted_features[:8]),  # Top 8 features
-                    'top_features': [f[0] for f in sorted_features[:3]],
-                    'model_type': model_name.replace('_', ' ').title(),
-                    'explanation_method': 'Feature Importance Analysis',
-                    'confidence_score': np.random.uniform(0.7, 0.95),
-                    'explanation_timestamp': datetime.now().isoformat()
-                }
-                
-            except Exception as e:
-                logger.warning(f"Error explaining {model_name}: {e}")
-                continue
-        
-        if explanations:
-            # Generate comprehensive report
-            report = generate_explanation_report(explanations, ticker)
-            explanations['report'] = report
-            
-            # Cache results
-            explanations['timestamp'] = datetime.now().isoformat()
-            st.session_state.model_explanations_cache[cache_key] = explanations
-        
-        return explanations
-        
-    except Exception as e:
-        logger.error(f"Error in model explanation: {e}")
-        return {
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }
-
-def generate_explanation_report(explanations: Dict, ticker: str) -> str:
-    """Generate comprehensive explanation report"""
-    try:
-        model_count = len([k for k in explanations.keys() if k != 'report'])
-        
-        report = f"""
-Model Explanation Report for {ticker}
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-SUMMARY:
-- Models Analyzed: {model_count}
-- Analysis Type: Feature Importance & Model Interpretability
-
-KEY INSIGHTS:
-"""
-        
-        # Find most important features across models
-        all_features = {}
-        for model_name, data in explanations.items():
-            if model_name == 'report':
-                continue
-            
-            for feature, importance in data.get('feature_importance', {}).items():
-                if feature not in all_features:
-                    all_features[feature] = []
-                all_features[feature].append(importance)
-        
-        # Calculate average importance
-        avg_importance = {}
-        for feature, importances in all_features.items():
-            avg_importance[feature] = np.mean(importances)
-        
-        # Sort by average importance
-        sorted_avg = sorted(avg_importance.items(), key=lambda x: x[1], reverse=True)
-        
-        report += "\nMOST IMPORTANT FEATURES (Average across all models):\n"
-        for i, (feature, importance) in enumerate(sorted_avg[:5], 1):
-            report += f"{i}. {feature}: {importance:.3f} importance\n"
-        
-        report += f"""
-MODEL-SPECIFIC INSIGHTS:
-"""
-        
-        for model_name, data in explanations.items():
-            if model_name == 'report':
-                continue
-                
-            confidence = data.get('confidence_score', 0)
-            top_feature = data.get('top_features', ['Unknown'])[0]
-            
-            report += f"• {data.get('model_type', model_name)}: Primary factor is {top_feature} (Confidence: {confidence:.1%})\n"
-        
-        report += """
-INTERPRETATION NOTES:
-- Higher importance values indicate stronger influence on predictions
-- Feature importance varies by model architecture and training data
-- Multiple models provide ensemble robustness and cross-validation
-"""
-        
-        return report
-        
-    except Exception as e:
-        return f"Error generating report: {e}"
-        
 
 # =============================================================================
 # REAL PREDICTION ENGINE (FULL BACKEND INTEGRATION)
@@ -4372,20 +4090,20 @@ class EnhancedChartGenerator:
 
 
 def create_enhanced_header():
-    """Enhanced header with educational focus"""
+    """Enhanced header with real system status"""
     col1, col2, col3 = st.columns([2, 5, 2])
     
     with col1:
         st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=60)
     
     with col2:
-        st.title("📚 AI Trading Education Platform")
-        st.caption("Learn AI Concepts • Practice Simulations • Educational Purpose Only")
+        st.title("🚀 AI Trading Professional")
+        st.caption("Fully Integrated Backend • Real-time Analysis • Advanced AI")
     
     with col3:
         tier_color = "#FFD700" if st.session_state.subscription_tier == 'premium' else "#E0E0E0"
         tier_text_color = "#000" if st.session_state.subscription_tier == 'premium' else "#666"
-        tier_text = "LEARNING MODE" if st.session_state.subscription_tier == 'premium' else "Demo Mode"
+        tier_text = "PREMIUM ACTIVE" if st.session_state.subscription_tier == 'premium' else "FREE TIER"
         
         st.markdown(
             f'<div style="background-color:{tier_color};color:{tier_text_color};'
@@ -4432,16 +4150,12 @@ def create_enhanced_sidebar():
                 with st.expander("🔓 See All Premium Features"):
                     for feature in features[8:]:
                        st.markdown(f"• {feature}")
-        else:
-            st.info("ℹ️ **FREE TIER ACTIVE**")
-            usage = st.session_state.daily_usage.get('predictions', 0)
-            st.markdown(f"**Daily Usage:** {usage}/10 predictions")
-            
+        
             premium_key = st.text_input(
                 "Enter Premium Key",
                 type="password",
                 value=st.session_state.premium_key,
-                help="Enter 'Prem246_357' for full access"
+                help="Enter 'Prem246_135' for full access"
             )
             
             if st.button("🚀 Activate Premium", type="primary"):
@@ -4472,8 +4186,6 @@ def create_enhanced_sidebar():
         )
         
         available_tickers = ticker_categories[category]
-        if st.session_state.subscription_tier == 'free':
-            available_tickers = available_tickers[:3]  # Limit for free tier
         
         ticker = st.selectbox(
             "Select Asset",
@@ -4571,25 +4283,24 @@ def create_enhanced_sidebar():
 
 
 def create_enhanced_prediction_section():
-    """Enhanced prediction section with premium key click tracking"""
+    """Enhanced prediction section - Premium only"""
     
-    st.header("🎓 AI Learning & Simulation Engine")
+    st.markdown("""
+    <div class="glass-card">
+        <h2 style="margin: 0; color: #1e293b; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 32px;">🤖</span>
+            Advanced AI Prediction Engine
+        </h2>
+        <p style="margin: 8px 0 0 0; color: #64748b;">
+            Professional-grade AI analysis with 6 advanced models and real-time insights
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.header("🤖 Advanced AI Prediction Engine")
     
     ticker = st.session_state.selected_ticker
     asset_type = get_asset_type(ticker)
-    
-    # Asset information display
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"**Asset:** {ticker}")
-    with col2:
-        st.info(f"**Type:** {asset_type.title()}")
-    with col3:
-        if ticker in st.session_state.real_time_prices:
-            price = st.session_state.real_time_prices[ticker]
-            st.info(f"**Price:** ${price:.4f}")
-        else:
-            st.info("**Price:** Loading...")
     
     # Show premium status and remaining clicks
     if st.session_state.subscription_tier == 'premium':
@@ -4608,7 +4319,7 @@ def create_enhanced_prediction_section():
                 st.error("❌ Premium key exhausted - No predictions remaining")
                 return
     
-    # Main prediction controls - Button layout based on user type
+    # Main prediction controls - UPDATE: Add cross-validation for master key only
     is_master_key = (st.session_state.subscription_tier == 'premium' and 
                      st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
     
@@ -4618,19 +4329,19 @@ def create_enhanced_prediction_section():
         
         with col1:
             predict_button = st.button(
-                "📚 Generate Educational Prediction", 
+                "🎯 Generate AI Prediction", 
                 type="primary",
-                help="Run educational AI analysis simulation"
+                help="Run comprehensive AI analysis"
             )
         
         with col2:
             cv_button = st.button(
-                "📊 Learn Cross-Validation", 
-                help="Educational cross-validation demonstration (Master only)"
+                "📊 Cross-Validate", 
+                help="Run advanced cross-validation analysis (Master only)"
             )
         
         with col3:
-            backtest_button = st.button("📈 Practice Backtesting", help="Educational backtest simulation")
+            backtest_button = st.button("📈 Backtest", help="Run backtest")
     else:
         # Regular premium and free users get only prediction and backtest
         if st.session_state.subscription_tier == 'premium':
@@ -4638,9 +4349,9 @@ def create_enhanced_prediction_section():
             
             with col1:
                 predict_button = st.button(
-                    "🎓 Practice AI Analysis", 
+                    "🎯 Generate AI Prediction", 
                     type="primary",
-                    help="Learn how AI models analyze market data"
+                    help="Run comprehensive AI analysis"
                 )
             
             with col2:
@@ -4650,9 +4361,9 @@ def create_enhanced_prediction_section():
         else:
             # Free users get only prediction
             predict_button = st.button(
-                "🎓 Practice AI Analysis", 
+                "🎯 Generate AI Prediction", 
                 type="primary",
-                help="Learn how AI models analyze market data"
+                help="Run comprehensive AI analysis"
             )
             cv_button = False
             backtest_button = False
@@ -4663,54 +4374,80 @@ def create_enhanced_prediction_section():
         if st.session_state.subscription_tier == 'premium':
             premium_key = st.session_state.premium_key
             
-            # Record the click for customer keys only
-            if premium_key != PremiumKeyManager.MASTER_KEY:
-                success, click_result = PremiumKeyManager.record_click(
-                    premium_key, 
-                    {
-                        'symbol': ticker,
-                        'asset_type': asset_type,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                )
-                
-                if not success:
-                    st.error(f"❌ {click_result['message']}")
-                    return
-                
-                # Show remaining clicks
-                if click_result['clicks_remaining'] != 'unlimited':
-                    st.info(f"📊 {click_result['message']}")
-        
-        with st.spinner("🔄 Running advanced AI analysis..."):
-            # Execute prediction
-            models_to_use = st.session_state.get('selected_models', [])
-            
-            prediction = RealPredictionEngine.run_real_prediction(
-                ticker, 
-                st.session_state.selected_timeframe,
-                models_to_use
+            # Record the click
+            success, click_result = PremiumKeyManager.record_click(
+                premium_key, 
+                {
+                    'symbol': ticker,
+                    'asset_type': asset_type,
+                    'timestamp': datetime.now().isoformat()
+                }
             )
             
-            if prediction:
-                st.session_state.current_prediction = prediction
-                st.session_state.session_stats['predictions'] += 1
-                
-                # Success message based on backend availability
-                if prediction.get('fallback_mode', False):
-                    st.warning("⚡ **DEMO PREDICTION** - Backend simulation mode")
-                else:
-                    st.success("🔥 **LIVE AI PREDICTION** - Real-time backend analysis")
+            if not success:
+                st.error(f"❌ {click_result['message']}")
+                return
+            
+            # Show remaining clicks
+            if click_result['clicks_remaining'] != 'unlimited':
+                st.info(f"📊 {click_result['message']}")
+        
+        # MODERN LOADING ANIMATION 
+        progress_container = st.empty()
+        status_container = st.empty()
+
+        with progress_container.container():
+            st.markdown("""
+            <div class="glass-card" style="text-align: center;">
+                <h3>🔮 AI Analysis in Progress</h3>
+                <div class="loading-shimmer" style="height: 4px; border-radius: 2px; margin: 20px 0;"></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Simulate analysis steps with modern progress
+        steps = [
+            ("🔍 Fetching market data", 0.2),
+            ("🧠 Processing AI models", 0.5),
+            ("📊 Calculating predictions", 0.7),
+            ("⚡ Generating insights", 0.9),
+            ("✅ Analysis complete", 1.0)
+        ]
+
+        progress_bar = st.progress(0)
+
+        for step, progress in steps:
+            status_container.info(f"{step}...")
+            progress_bar.progress(progress)
+            time.sleep(0.3)
+
+        # Clear loading
+        progress_container.empty()
+        status_container.empty()
+
+        # Execute prediction
+        prediction = RealPredictionEngine.run_real_prediction(
+            ticker, 
+            st.session_state.selected_timeframe,
+            st.session_state.selected_models
+        )
+
+        if prediction:
+            st.session_state.current_prediction = prediction
+            st.session_state.session_stats['predictions'] += 1
+            
+            # Success message based on backend availability
+            if prediction.get('fallback_mode', False):
+                st.warning("⚡ **DEMO PREDICTION** - Backend simulation mode")
             else:
-                st.error("❌ Prediction failed - please try again")
+                st.success("🔥 **LIVE AI PREDICTION** - Real-time backend analysis")
+        else:
+            st.error("❌ Prediction failed - please try again")
     
     # CROSS-VALIDATION EXECUTION (Master key only)
     if cv_button:
         with st.spinner("🔍 Running comprehensive cross-validation analysis..."):
-            models_to_use = st.session_state.get('selected_models', [])
-            
             cv_results = RealCrossValidationEngine.run_real_cross_validation(
-                ticker, models_to_use
+                ticker, st.session_state.selected_models
             )
             
             if cv_results:
@@ -4738,100 +4475,305 @@ def create_enhanced_prediction_section():
 
 
 def display_enhanced_prediction_results(prediction: Dict):
-    """Display comprehensive prediction results with all backend features"""
+    """Display comprehensive prediction results with elegant, user-friendly interface"""
     
-    # ADD THIS LINE FIRST:
-    apply_unified_dashboard_styling()
-    
-    # ADD THIS LINE AT THE VERY BEGINNING:
-    create_professional_metrics_grid(prediction)
-    
-    # Source indicator
+    # Source indicator with modern styling
     source = prediction.get('source', 'unknown')
     fallback_mode = prediction.get('fallback_mode', False)
     
     if not fallback_mode and BACKEND_AVAILABLE:
-        st.success("📚 **EDUCATIONAL SIMULATION** - Real AI concepts with educational data")
+        st.markdown("""
+        <div class="glass-card" style="background: linear-gradient(135deg, #10b981, #059669); color: white; text-align: center; margin-bottom: 24px;">
+            <h3 style="margin: 0; display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <span style="font-size: 24px;">🔥</span>
+                LIVE AI PREDICTION
+                <span style="font-size: 24px;">🤖</span>
+            </h3>
+            <p style="margin: 8px 0 0 0; opacity: 0.9;">Real-time analysis with full backend integration</p>
+        </div>
+        """, unsafe_allow_html=True)
     elif fallback_mode:
-        st.warning("🎓 **LEARNING MODE** - Simulated AI models for educational purposes")
-    else:
-        st.info("📖 **DEMO MODE** - Basic educational demonstrations")
+        st.markdown("""
+        <div class="glass-card" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; text-align: center; margin-bottom: 24px;">
+            <h3 style="margin: 0; display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <span style="font-size: 24px;">⚡</span>
+                ENHANCED SIMULATION
+                <span style="font-size: 24px;">🎯</span>
+            </h3>
+            <p style="margin: 8px 0 0 0; opacity: 0.9;">Advanced modeling with realistic market constraints</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Main prediction metrics
-    st.markdown("### 🎯 AI Prediction Results")
+    # Extract prediction data
+    current_price = prediction.get('current_price', 0)
+    predicted_price = prediction.get('predicted_price', 0)
+    price_change_pct = prediction.get('price_change_pct', 0)
+    confidence = prediction.get('confidence', 0)
+    ticker = prediction.get('ticker', '')
     
-    # Use modern metrics grid instead
-    create_modern_metrics_grid(prediction)
+    # Determine prediction direction and styling
+    is_bullish = predicted_price > current_price
+    direction_color = "#10b981" if is_bullish else "#ef4444"
+    direction_icon = "📈" if is_bullish else "📉"
+    direction_text = "BULLISH SIGNAL" if is_bullish else "BEARISH SIGNAL"
     
-    # Comprehensive visualization with modern container
-    chart = EnhancedChartGenerator.create_comprehensive_prediction_chart(prediction)
-    create_modern_chart_container("Comprehensive AI Analysis", chart)
+    # Main prediction card with hero styling
+    st.markdown(f"""
+    <div class="glass-card" style="background: linear-gradient(135deg, {direction_color}15, {direction_color}25); border-left: 5px solid {direction_color}; margin-bottom: 32px;">
+        <div style="text-align: center; padding: 20px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">{direction_icon}</div>
+            <h1 style="color: {direction_color}; margin: 0 0 8px 0; font-size: 2rem;">{direction_text}</h1>
+            <p style="color: #64748b; font-size: 1.1rem; margin: 0;">AI Prediction for {ticker}</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Key metrics in elegant cards
+    st.markdown("### 🎯 Key Prediction Metrics")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid #3b82f6;">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                Current Price
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: #1e293b; margin-bottom: 4px;">
+                ${current_price:.4f}
+            </div>
+            <div style="color: #64748b; font-size: 12px;">
+                Market Price
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid {direction_color};">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                AI Prediction
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: {direction_color}; margin-bottom: 4px;">
+                ${predicted_price:.4f}
+            </div>
+            <div style="color: {direction_color}; font-size: 14px; font-weight: 600;">
+                {price_change_pct:+.2f}%
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        # Confidence gauge styling
+        confidence_color = "#10b981" if confidence > 80 else "#f59e0b" if confidence > 60 else "#ef4444"
+        confidence_level = "HIGH" if confidence > 80 else "MEDIUM" if confidence > 60 else "LOW"
         
-    # FTMO Integration
-    enhance_prediction_with_ftmo(prediction)    
+        st.markdown(f"""
+        <div class="metric-modern" style="text-align: center; border-left: 4px solid {confidence_color};">
+            <div style="color: #64748b; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                AI Confidence
+            </div>
+            <div style="font-size: 2rem; font-weight: 700; color: {confidence_color}; margin-bottom: 4px;">
+                {confidence:.1f}%
+            </div>
+            <div style="color: {confidence_color}; font-size: 12px; font-weight: 600;">
+                {confidence_level} CONFIDENCE
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Enhanced tabs with master key cross-validation
+    # Price movement visualization
+    st.markdown("### 📊 Price Movement Analysis")
+    
+    # Create a simple but elegant price movement chart
+    movement_data = {
+        'Current': current_price,
+        'Predicted': predicted_price
+    }
+    
+    fig = go.Figure()
+    
+    # Add current price point
+    fig.add_trace(go.Scatter(
+        x=['Current Price'],
+        y=[current_price],
+        mode='markers',
+        marker=dict(size=20, color='#6b7280', symbol='circle'),
+        name='Current',
+        text=f'${current_price:.4f}',
+        textposition='top center'
+    ))
+    
+    # Add predicted price point
+    fig.add_trace(go.Scatter(
+        x=['AI Prediction'],
+        y=[predicted_price],
+        mode='markers',
+        marker=dict(size=25, color=direction_color, symbol='star'),
+        name='Predicted',
+        text=f'${predicted_price:.4f}',
+        textposition='top center'
+    ))
+    
+    # Add connection line
+    fig.add_trace(go.Scatter(
+        x=['Current Price', 'AI Prediction'],
+        y=[current_price, predicted_price],
+        mode='lines',
+        line=dict(color=direction_color, width=3, dash='dash'),
+        showlegend=False
+    ))
+    
+    # Add forecast if available
+    forecast = prediction.get('forecast_5_day', [])
+    if forecast:
+        forecast_x = [f'Day {i+1}' for i in range(len(forecast))]
+        fig.add_trace(go.Scatter(
+            x=['AI Prediction'] + forecast_x,
+            y=[predicted_price] + forecast,
+            mode='lines+markers',
+            line=dict(color='#8b5cf6', width=2),
+            marker=dict(size=8, color='#8b5cf6'),
+            name='5-Day Forecast'
+        ))
+    
+    fig.update_layout(
+        title=f"Price Analysis for {ticker}",
+        template="plotly_white",
+        height=400,
+        showlegend=True,
+        xaxis_title="Timeline",
+        yaxis_title="Price ($)"
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # AI Insights Summary in user-friendly language
+    st.markdown("### 🧠 AI Insights Summary")
+    
+    # Generate user-friendly insights
+    insights = []
+    
+    # Price movement insight
+    if abs(price_change_pct) > 5:
+        insights.append(f"🎯 **Significant Movement Expected**: The AI predicts a {abs(price_change_pct):.1f}% {'increase' if is_bullish else 'decrease'} - this is considered a substantial price movement.")
+    elif abs(price_change_pct) > 2:
+        insights.append(f"📈 **Moderate Movement Expected**: The AI forecasts a {abs(price_change_pct):.1f}% {'rise' if is_bullish else 'fall'} - a reasonable price adjustment is anticipated.")
+    else:
+        insights.append(f"📊 **Minor Movement Expected**: The AI suggests a small {abs(price_change_pct):.1f}% {'uptick' if is_bullish else 'decline'} - relatively stable price action.")
+    
+    # Confidence insight
+    if confidence > 80:
+        insights.append(f"✅ **High Confidence Prediction**: With {confidence:.1f}% confidence, the AI model shows strong conviction in this forecast.")
+    elif confidence > 60:
+        insights.append(f"⚖️ **Moderate Confidence**: The AI shows {confidence:.1f}% confidence - a reasonably reliable prediction with some uncertainty.")
+    else:
+        insights.append(f"⚠️ **Lower Confidence**: At {confidence:.1f}% confidence, this prediction should be considered with caution and additional analysis.")
+    
+    # Risk insight based on asset type
+    asset_type = get_asset_type(ticker)
+    if asset_type == 'crypto':
+        insights.append("🌊 **Crypto Asset**: Remember that cryptocurrency markets are highly volatile and can change rapidly due to news, regulations, or market sentiment.")
+    elif asset_type == 'forex':
+        insights.append("💱 **Forex Pair**: Currency movements can be influenced by economic data, central bank policies, and geopolitical events.")
+    elif asset_type == 'commodity':
+        insights.append("🛢️ **Commodity**: Commodity prices are affected by supply/demand dynamics, weather conditions, and global economic factors.")
+    elif asset_type == 'index':
+        insights.append("📊 **Market Index**: Index movements reflect broader market sentiment and economic conditions across multiple companies.")
+    else:
+        insights.append("📈 **Individual Stock**: Stock price movements can be influenced by company earnings, news, and overall market conditions.")
+    
+    # Display insights in elegant format
+    for insight in insights:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f8fafc, #e2e8f0); padding: 16px; border-radius: 8px; margin: 8px 0; border-left: 4px solid #3b82f6;">
+            {insight}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # FTMO Integration
+    enhance_prediction_with_ftmo(prediction)
+    
+    # Enhanced tabs with better organization
     is_master_key = (st.session_state.subscription_tier == 'premium' and 
                      st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
     
     if is_master_key:
-        # Master key users get cross-validation tab
         tab_names = [
-            "📈 Forecast", "📋 Trading Plan", "📊 Cross-Validation", "⚠️ Risk Analysis"
+            "📈 Trading Strategy", "📊 Advanced Analysis", "🔍 Cross-Validation", "⚠️ Risk Assessment"
         ]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Cross-validation tab (Master only)
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_cross_validation_tab()
-        
-        # Risk analysis tab
         with tabs[3]:
             display_enhanced_risk_tab(prediction)
             
     elif st.session_state.subscription_tier == 'premium':
-        # Regular premium users get standard tabs
         tab_names = [
-            "📈 Forecast", "📋 Trading Plan", "⚠️ Risk Analysis"
+            "📈 Trading Strategy", "📊 Analysis", "⚠️ Risk Assessment"
         ]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Risk analysis tab
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_enhanced_risk_tab(prediction)
     
     else:
-        # Free users get basic tabs
-        tab_names = ["📈 Forecast", "📋 Trading Plan", "📊 Basic Analysis"]
+        tab_names = ["📈 Strategy", "📊 Analysis", "📋 Basic Info"]
         tabs = st.tabs(tab_names)
         
-        # Forecast tab
         with tabs[0]:
-            display_enhanced_forecast_tab(prediction)
-        
-        # Trading plan tab
-        with tabs[1]:
             display_enhanced_trading_plan_tab(prediction)
-        
-        # Basic analysis tab
+        with tabs[1]:
+            display_enhanced_forecast_tab(prediction)
         with tabs[2]:
             display_basic_analysis_tab(prediction)
+
+def display_basic_analysis_tab(prediction: Dict):
+    """Display basic analysis for free tier users"""
+    st.subheader("📋 Basic Market Analysis")
+    
+    ticker = prediction.get('ticker', '')
+    current_price = prediction.get('current_price', 0)
+    predicted_price = prediction.get('predicted_price', 0)
+    asset_type = get_asset_type(ticker)
+    
+    # Simple market context
+    st.markdown("#### 🎯 What This Means")
+    
+    price_change_pct = ((predicted_price - current_price) / current_price) * 100
+    is_bullish = predicted_price > current_price
+    
+    if is_bullish:
+        st.success(f"📈 **Positive Outlook**: The AI suggests {ticker} may increase by approximately {abs(price_change_pct):.1f}%")
+    else:
+        st.warning(f"📉 **Cautious Outlook**: The AI suggests {ticker} may decrease by approximately {abs(price_change_pct):.1f}%")
+    
+    # Basic risk warning
+    st.markdown("#### ⚠️ Important Reminders")
+    
+    reminders = [
+        "🎯 This is an AI prediction, not financial advice",
+        "📊 Always do your own research before making investment decisions",
+        "💰 Never invest more than you can afford to lose",
+        "📈 Market conditions can change rapidly",
+        f"🏷️ {ticker} is a {asset_type} - understand the specific risks involved"
+    ]
+    
+    for reminder in reminders:
+        st.markdown(f"• {reminder}")
+    
+    # Upgrade promotion
+    st.markdown("---")
+    st.info("🚀 **Upgrade to Premium** for advanced risk analysis, detailed forecasts, and professional trading plans!")
 
 
 def display_enhanced_forecast_tab(prediction: Dict):
@@ -5867,9 +5809,6 @@ def display_enhanced_trading_plan_tab(prediction: Dict):
     confidence = prediction.get('confidence', 0)
     asset_type = get_asset_type(ticker)
     
-    # ADD PROFESSIONAL TRADING LEVELS HERE:
-    create_professional_trading_levels(prediction)
-    
     # === TRADE ANALYSIS & SETUP ===
     st.markdown("### 🎯 Trade Analysis & Setup")
     
@@ -6320,100 +6259,7 @@ def display_enhanced_trading_plan_tab(prediction: Dict):
     
     st.info("💡 **Remember**: This plan is based on AI analysis and should be combined with your own market analysis and risk tolerance. Always trade responsibly.")
 
-def display_basic_analysis_tab(prediction: Dict):
-    """Basic analysis for free educational users"""
-    st.subheader("📊 Basic Market Analysis")
-    
-    ticker = prediction.get('ticker', '')
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    confidence = prediction.get('confidence', 0)
-    
-    # Basic technical levels
-    st.markdown("#### 📈 Technical Levels")
-    
-    # Simple support/resistance based on current price
-    support_level = current_price * 0.98
-    resistance_level = current_price * 1.02
-    
-    tech_cols = st.columns(3)
-    
-    with tech_cols[0]:
-        st.metric("Support", f"${support_level:.4f}", help="Potential support level")
-    
-    with tech_cols[1]:
-        st.metric("Current", f"${current_price:.4f}", help="Current market price")
-    
-    with tech_cols[2]:
-        st.metric("Resistance", f"${resistance_level:.4f}", help="Potential resistance level")
-    
-    # Basic trend analysis
-    st.markdown("#### 📊 Trend Analysis")
-    
-    price_change_pct = ((predicted_price - current_price) / current_price) * 100
-    
-    if price_change_pct > 0.5:
-        trend = "📈 **BULLISH TREND**"
-        trend_color = "green"
-        trend_desc = "AI models suggest upward price movement"
-    elif price_change_pct < -0.5:
-        trend = "📉 **BEARISH TREND**"
-        trend_color = "red"
-        trend_desc = "AI models suggest downward price movement"
-    else:
-        trend = "↔️ **NEUTRAL TREND**"
-        trend_color = "gray"
-        trend_desc = "AI models suggest sideways price movement"
-    
-    st.markdown(
-        f'<div style="padding:20px;background:linear-gradient(135deg, #f8f9fa, #ffffff);'
-        f'border-left:5px solid {trend_color};border-radius:10px;margin:20px 0">'
-        f'<h3 style="color:{trend_color};margin:0">{trend}</h3>'
-        f'<p style="margin:10px 0 0 0">{trend_desc}</p>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    
-    # Basic risk assessment
-    st.markdown("#### ⚠️ Risk Assessment")
-    
-    asset_type = get_asset_type(ticker)
-    
-    risk_levels = {
-        'crypto': ('High Risk', 'red', 'Cryptocurrency assets are highly volatile'),
-        'forex': ('Medium Risk', 'orange', 'Currency pairs can move quickly on economic news'),
-        'commodity': ('Medium Risk', 'orange', 'Commodity prices affected by supply/demand'),
-        'index': ('Low-Medium Risk', 'yellow', 'Broad market indices are generally less volatile'),
-        'stock': ('Medium Risk', 'orange', 'Individual stocks carry company-specific risks')
-    }
-    
-    risk_level, risk_color, risk_desc = risk_levels.get(asset_type, risk_levels['stock'])
-    
-    st.markdown(
-        f'<div style="padding:15px;background:#f8f9fa;border-radius:8px;'
-        f'border-left:4px solid {risk_color}">'
-        f'<strong style="color:{risk_color}">Risk Level: {risk_level}</strong><br>'
-        f'<span style="color:#666">{risk_desc}</span>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    
-    # Upgrade promotion
-    st.markdown("#### 🚀 Unlock Advanced Features")
-    
-    st.info("""
-    **Learn More with Premium Access:**
-    
-    • 🎓 Educational AI Model Explanations
-    • 📊 Interactive Learning Modules  
-    • 🔍 Detailed Algorithm Walkthroughs
-    • ⚠️ Risk Concept Tutorials
-    • 📈 Market Analysis Education
-    • 🌐 Alternative Data Learning
-    • 🚨 Model Validation Concepts
-    • 💼 Portfolio Theory Practice
-    """)
-    
+
 def create_advanced_analytics_section():
     """Advanced analytics section for premium users"""
     st.header("📊 Advanced Analytics Suite")
@@ -6458,110 +6304,155 @@ def create_advanced_analytics_section():
     
     # Display results
     display_analytics_results()
+    
+    
+def create_mobile_config_manager(is_mobile):
+    """Enhanced mobile config manager with actual functionality"""
+    class MobileConfigManager:
+        def __init__(self, is_mobile_device):
+            self.is_mobile = is_mobile_device
+            self.config = self._generate_mobile_config()
+        
+        def _generate_mobile_config(self):
+            if self.is_mobile:
+                return {
+                    "chart_height": 300,
+                    "sidebar_collapsed": True,
+                    "columns_per_row": 1,
+                    "font_size": "small",
+                    "reduced_animations": True,
+                    "simplified_charts": True
+                }
+            else:
+                return {
+                    "chart_height": 500,
+                    "sidebar_collapsed": False,
+                    "columns_per_row": 3,
+                    "font_size": "normal",
+                    "reduced_animations": False,
+                    "simplified_charts": False
+                }
+        
+        def get_config(self, key=None):
+            if key:
+                return self.config.get(key)
+            return self.config
+    
+    return MobileConfigManager(is_mobile)
 
+def create_mobile_performance_optimizer(is_mobile):
+    """Enhanced mobile performance optimizer with actual functionality"""
+    class MobilePerformanceOptimizer:
+        def __init__(self, is_mobile_device):
+            self.is_mobile = is_mobile_device
+            self.optimizations = self._setup_optimizations()
+        
+        def _setup_optimizations(self):
+            if self.is_mobile:
+                return {
+                    "cache_enabled": True,
+                    "lazy_loading": True,
+                    "reduced_precision": True,
+                    "batch_size": 50,
+                    "update_frequency": 10  # seconds
+                }
+            else:
+                return {
+                    "cache_enabled": False,
+                    "lazy_loading": False,
+                    "reduced_precision": False,
+                    "batch_size": 100,
+                    "update_frequency": 5  # seconds
+                }
+        
+        def optimize_data_loading(self, data):
+            """Optimize data loading based on device type"""
+            if self.is_mobile and len(data) > self.optimizations["batch_size"]:
+                return data.tail(self.optimizations["batch_size"])
+            return data
+        
+        def get_chart_config(self):
+            """Get optimized chart configuration"""
+            if self.is_mobile:
+                return {
+                    "height": 300,
+                    "show_toolbar": False,
+                    "responsive": True,
+                    "animation": False
+                }
+            else:
+                return {
+                    "height": 500,
+                    "show_toolbar": True,
+                    "responsive": True,
+                    "animation": True
+                }
+    
+    return MobilePerformanceOptimizer(is_mobile)
 
-def create_basic_analytics_section():
-    """Basic analytics for free tier users"""
-    st.header("📊 Basic Analytics")
+def apply_mobile_optimizations():
+    """Enhanced mobile optimization with conditional CSS"""
+    st.markdown("""
+    <style>
+    /* Mobile-first responsive design */
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding: 0.5rem;
+            max-width: 100%;
+        }
+        
+        /* Simplify metrics display */
+        [data-testid="metric-container"] {
+            margin: 0.25rem 0;
+            padding: 0.5rem;
+        }
+        
+        /* Stack columns vertically */
+        .stColumns {
+            flex-direction: column;
+        }
+        
+        /* Reduce chart heights */
+        .js-plotly-plot {
+            height: 300px !important;
+        }
+        
+        /* Optimize buttons */
+        .stButton > button {
+            width: 100%;
+            margin: 0.25rem 0;
+            padding: 0.5rem;
+            font-size: 14px;
+        }
+        
+        /* Collapse sidebar by default on mobile */
+        .css-1d391kg {
+            transform: translateX(-100%);
+        }
+        
+        /* Optimize text areas */
+        .stTextArea textarea {
+            max-height: 200px;
+        }
+        
+        /* Hide certain elements on mobile */
+        .mobile-hide {
+            display: none !important;
+        }
+    }
     
-    ticker = st.session_state.selected_ticker
-    
-    # Basic market information
-    st.markdown("#### 📈 Market Overview")
-    
-    # Get basic price info
-    current_price = st.session_state.real_time_prices.get(ticker, 0)
-    asset_type = get_asset_type(ticker)
-    
-    info_cols = st.columns(3)
-    
-    with info_cols[0]:
-        st.metric("Current Price", f"${current_price:.4f}")
-    
-    with info_cols[1]:
-        st.metric("Asset Type", asset_type.title())
-    
-    with info_cols[2]:
-        market_status = "Open" if is_market_open() else "Closed"
-        st.metric("Market Status", market_status)
-    
-    # Basic trend analysis
-    st.markdown("#### 📊 Simple Trend Analysis")
-    
-    # Generate simple moving averages
-    dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-    base_price = current_price
-    prices = []
-    
-    for i in range(30):
-        daily_change = np.random.normal(0, 0.01)  # 1% daily volatility
-        if i == 0:
-            prices.append(base_price)
-        else:
-            new_price = prices[-1] * (1 + daily_change)
-            prices.append(new_price)
-    
-    df_trend = pd.DataFrame({
-        'Date': dates,
-        'Price': prices
-    })
-    
-    # Calculate simple moving averages
-    df_trend['SMA_5'] = df_trend['Price'].rolling(5).mean()
-    df_trend['SMA_10'] = df_trend['Price'].rolling(10).mean()
-    
-    # Create basic chart
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['Price'],
-        mode='lines',
-        name='Price',
-        line=dict(color='blue', width=2)
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['SMA_5'],
-        mode='lines',
-        name='5-Day Average',
-        line=dict(color='orange', width=1)
-    ))
-    
-    fig.add_trace(go.Scatter(
-        x=df_trend['Date'],
-        y=df_trend['SMA_10'],
-        mode='lines',
-        name='10-Day Average',
-        line=dict(color='red', width=1)
-    ))
-    
-    fig.update_layout(
-        title=f"{ticker} - Price Trend (30 Days)",
-        xaxis_title="Date",
-        yaxis_title="Price ($)",
-        template="plotly_white"
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Upgrade promotion
-    st.markdown("---")
-    st.markdown("#### 🚀 Unlock Advanced Analytics")
-    
-    st.info("""
-    **Premium Features Include:**
-    
-    • 📊 **Market Regime Detection** - AI-powered regime analysis
-    • 🚨 **Model Drift Detection** - Monitor model performance
-    • 🔍 **SHAP Explanations** - Understand AI decisions
-    • 🌐 **Alternative Data** - Real-time sentiment, options flow
-    • ⚠️ **Advanced Risk Metrics** - VaR, Sharpe, Sortino ratios
-    • 📈 **Cross-Validation** - Rigorous model validation
-    
-    **Enter Premium Key: xxxxxxxxx**
-    """)
+    @media (max-width: 480px) {
+        /* Extra small screens */
+        .main .block-container {
+            padding: 0.25rem;
+        }
+        
+        h1 { font-size: 1.5rem; }
+        h2 { font-size: 1.25rem; }
+        h3 { font-size: 1.1rem; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 def create_portfolio_management_section():
@@ -6893,113 +6784,6 @@ def create_model_management_section():
         
         if uploaded_models:
             st.success("✅ Model package uploaded! (Import functionality would be implemented here)")
-
-
-def create_professional_trading_levels(prediction: Dict):
-    """Create professional trading level cards"""
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    
-    # Calculate levels
-    is_bullish = predicted_price > current_price
-    price_change = abs(predicted_price - current_price)
-    
-    if is_bullish:
-        entry = current_price
-        target1 = current_price + price_change * 0.6
-        target2 = current_price + price_change * 1.0
-        target3 = current_price + price_change * 1.6
-        stop_loss = current_price - price_change * 0.4
-    else:
-        entry = current_price
-        target1 = current_price - price_change * 0.6
-        target2 = current_price - price_change * 1.0
-        target3 = current_price - price_change * 1.6
-        stop_loss = current_price + price_change * 0.4
-    
-    st.markdown("### 🎯 Trading Levels")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.markdown(f"""
-        <div class="trading-level-card entry-card">
-            <div style="font-size: 0.75rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                ENTRY PRICE
-            </div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: #3182ce; font-family: 'JetBrains Mono', monospace;">
-                ${entry:.2f}
-            </div>
-            <div style="font-size: 0.7rem; color: #3182ce; font-weight: 600; margin-top: 4px;">
-                CURRENT MARKET
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        target1_change = ((target1 - entry) / entry) * 100
-        st.markdown(f"""
-        <div class="trading-level-card target-card">
-            <div style="font-size: 0.75rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                TARGET 1
-            </div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: #38a169; font-family: 'JetBrains Mono', monospace;">
-                ${target1:.2f}
-            </div>
-            <div style="font-size: 0.7rem; color: #38a169; font-weight: 600; margin-top: 4px;">
-                {target1_change:+.1f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        target2_change = ((target2 - entry) / entry) * 100
-        st.markdown(f"""
-        <div class="trading-level-card target-card">
-            <div style="font-size: 0.75rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                TARGET 2
-            </div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: #38a169; font-family: 'JetBrains Mono', monospace;">
-                ${target2:.2f}
-            </div>
-            <div style="font-size: 0.7rem; color: #38a169; font-weight: 600; margin-top: 4px;">
-                {target2_change:+.1f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        target3_change = ((target3 - entry) / entry) * 100
-        st.markdown(f"""
-        <div class="trading-level-card target-card">
-            <div style="font-size: 0.75rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                TARGET 3
-            </div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: #38a169; font-family: 'JetBrains Mono', monospace;">
-                ${target3:.2f}
-            </div>
-            <div style="font-size: 0.7rem; color: #38a169; font-weight: 600; margin-top: 4px;">
-                {target3_change:+.1f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col5:
-        stop_change = ((stop_loss - entry) / entry) * 100
-        st.markdown(f"""
-        <div class="trading-level-card stop-card">
-            <div style="font-size: 0.75rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
-                STOP LOSS
-            </div>
-            <div style="font-size: 1.8rem; font-weight: 800; color: #e53e3e; font-family: 'JetBrains Mono', monospace;">
-                ${stop_loss:.2f}
-            </div>
-            <div style="font-size: 0.7rem; color: #e53e3e; font-weight: 600; margin-top: 4px;">
-                {stop_change:+.1f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
 
 # =============================================================================
 # SUPPORTING FUNCTIONS FOR ADVANCED FEATURES
@@ -7709,1149 +7493,68 @@ def generate_simulated_cv_results(ticker: str, models: List[str]) -> Dict:
         'simulated': True,
         'timestamp': datetime.now().isoformat()
     }
-    
-    
-def create_mt5_integration_tab():
-    """Create MT5 integration tab in the main app"""
-    st.header("📈 MetaTrader 5 Integration")
-    
-    # Connection setup
-    st.markdown("### 🔗 MT5 Connection Setup")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        account = st.number_input("MT5 Account Number", value=0, step=1)
-        password = st.text_input("Password", type="password")
-    
-    with col2:
-        server = st.text_input("Server", value="MetaQuotes-Demo")
-        mt5_path = st.text_input("MT5 Path (optional)", help="Leave empty for default")
-    
-    # Auto trading settings
-    st.markdown("### ⚙️ Auto Trading Settings")
-    
-    settings_col1, settings_col2 = st.columns(2)
-    
-    with settings_col1:
-        auto_trading_enabled = st.checkbox("Enable Auto Trading", value=False)
-        min_confidence = st.slider("Minimum Confidence (%)", 0, 100, 70)
-    
-    with settings_col2:
-        max_risk_per_trade = st.slider("Max Risk per Trade (%)", 0.1, 5.0, 2.0, 0.1)
-        max_daily_trades = st.number_input("Max Daily Trades", 1, 50, 10)
-    
-    # Connection button
-    if st.button("🚀 Connect to MT5", type="primary"):
-        if account > 0 and password:
-            with st.spinner("Connecting to MT5..."):
-                mt5_integration = MT5Integration()
-                
-                success = mt5_integration.setup_mt5_connection(
-                    account=account,
-                    password=password,
-                    server=server,
-                    path=mt5_path if mt5_path else None
-                )
-                
-                if success:
-                    st.success("✅ Successfully connected to MT5!")
-                    st.session_state.mt5_integration = mt5_integration
-                    st.session_state.mt5_connected = True
-                else:
-                    st.error("❌ Failed to connect to MT5")
-        else:
-            st.error("Please enter account number and password")
-    
-    # MT5 Status and Performance
-    if st.session_state.get('mt5_connected', False):
-        display_mt5_performance()
 
-def display_mt5_performance():
-    """Display MT5 performance metrics"""
-    st.markdown("---")
-    st.markdown("### 📊 MT5 Performance Dashboard")
-    
-    mt5_trader = st.session_state.get('mt5_trader')
-    if not mt5_trader:
-        st.warning("MT5 trader not initialized")
-        return
-    
-    # Get performance report
-    performance = mt5_trader.get_performance_report()
-    
-    # Performance metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Account Balance", f"${performance.get('account_balance', 0):,.2f}")
-    
-    with col2:
-        st.metric("Account Equity", f"${performance.get('account_equity', 0):,.2f}")
-    
-    with col3:
-        st.metric("Total Trades", performance.get('total_trades', 0))
-    
-    with col4:
-        st.metric("Win Rate", f"{performance.get('win_rate', 0):.1f}%")
-    
-    # P&L metrics
-    pnl_col1, pnl_col2, pnl_col3 = st.columns(3)
-    
-    with pnl_col1:
-        total_pnl = performance.get('total_pnl', 0)
-        st.metric("Total P&L", f"${total_pnl:,.2f}", 
-                 delta_color="normal" if total_pnl >= 0 else "inverse")
-    
-    with pnl_col2:
-        daily_pnl = performance.get('daily_pnl', 0)
-        st.metric("Daily P&L", f"${daily_pnl:,.2f}",
-                 delta_color="normal" if daily_pnl >= 0 else "inverse")
-    
-    with pnl_col3:
-        st.metric("Active Positions", performance.get('active_positions', 0))
-    
-    # Control buttons
-    control_col1, control_col2, control_col3 = st.columns(3)
-    
-    with control_col1:
-        if st.button("🔄 Refresh Status"):
-            st.rerun()
-    
-    with control_col2:
-        if st.button("📤 Send Current Prediction"):
-            if st.session_state.get('current_prediction'):
-                mt5_integration = st.session_state.get('mt5_integration')
-                if mt5_integration:
-                    success = mt5_integration.send_prediction_to_mt5(
-                        st.session_state.current_prediction
-                    )
-                    if success:
-                        st.success("✅ Signal sent to MT5!")
-                    else:
-                        st.error("❌ Failed to send signal")
-    
-    with control_col3:
-        if st.button("⚠️ Close All Positions", type="secondary"):
-            if st.button("Confirm Close All", key="confirm_close"):
-                mt5_trader.close_all_positions()
-                st.success("All positions closed!")    
-    
-
-def apply_unified_dashboard_styling():
-    """Consolidated professional dark theme styling"""
-    st.markdown("""
-    <style>
-   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap');
-    
-    /* === GLOBAL OVERRIDES === */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* === ROOT VARIABLES === */
-    :root {
-        --primary-bg: #0a0e1a;
-        --secondary-bg: #141b2e;
-        --card-bg: #1a2332;
-        --accent-bg: #2a3441;
-        --border-color: #2d3748;
-        --text-primary: #ffffff;
-        --text-secondary: #a0aec0;
-        --text-muted: #718096;
-        --accent-blue: #3182ce;
-        --accent-green: #38a169;
-        --accent-red: #e53e3e;
-        --accent-gold: #d69e2e;
-        --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
-        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
-        --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.2);
-        --border-radius-sm: 8px;
-        --border-radius-md: 12px;
-        --border-radius-lg: 16px;
-    }
-    
-    /* === MAIN APPLICATION === */
-    .stApp {
-        background: var(--primary-bg) !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
-        color: var(--text-primary) !important;
-    }
-    
-    .main .block-container {
-        max-width: 1600px;
-        padding: 24px;
-        background: rgba(26, 35, 50, 0.95);
-        backdrop-filter: blur(20px);
-        border-radius: var(--border-radius-lg);
-        border: 1px solid var(--border-color);
-        box-shadow: var(--shadow-lg);
-        margin: 20px auto;
-    }
-    
-    /* === ENHANCED BUTTONS WITH SMOOTH TRANSITIONS === */
-    .stButton > button {
-        background: var(--gradient-primary) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid rgba(102, 126, 234, 0.3) !important;
-        border-radius: var(--border-radius-md) !important;
-        padding: 14px 28px !important;
-        font-weight: 600 !important;
-        font-size: 14px !important;
-        box-shadow: var(--shadow-sm) !important;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-        position: relative !important;
-        overflow: hidden !important;
-    }
-    
-    .stButton > button::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-        transition: left 0.5s;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: var(--shadow-md) !important;
-        border-color: rgba(102, 126, 234, 0.6) !important;
-    }
-    
-    .stButton > button:hover::before {
-        left: 100%;
-    }
-    
-    /* === ENHANCED METRIC CARDS === */
-    .metric-card {
-        background: var(--card-bg);
-        border-radius: var(--border-radius-md);
-        padding: 24px;
-        border: 1px solid var(--border-color);
-        box-shadow: var(--shadow-sm);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        margin: 12px 0;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
-        height: 100%;
-        background: var(--gradient-primary);
-        transition: width 0.3s ease;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-4px);
-        box-shadow: var(--shadow-md);
-        border-color: rgba(102, 126, 234, 0.3);
-    }
-    
-    .metric-card:hover::before {
-        width: 8px;
-    }
-    
-    /* === ENHANCED TRADING CARDS === */
-    .trading-level-card {
-        background: var(--card-bg);
-        border: 2px solid;
-        border-radius: var(--border-radius-md);
-        padding: 20px;
-        text-align: center;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: var(--shadow-sm);
-        margin: 8px 0;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .trading-level-card::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(135deg, rgba(255,255,255,0.05), transparent);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .trading-level-card:hover {
-        transform: translateY(-6px) scale(1.02);
-        box-shadow: var(--shadow-lg);
-    }
-    
-    .trading-level-card:hover::after {
-        opacity: 1;
-    }
-    
-    .entry-card { border-color: var(--accent-blue); }
-    .target-card { border-color: var(--accent-green); }
-    .stop-card { border-color: var(--accent-red); }
-    
-    /* === ENHANCED CHART CONTAINERS === */
-    .chart-container {
-        background: var(--card-bg);
-        border-radius: var(--border-radius-md);
-        padding: 24px;
-        margin: 20px 0;
-        box-shadow: var(--shadow-sm);
-        border: 1px solid var(--border-color);
-        transition: all 0.3s ease;
-        position: relative;
-    }
-    
-    .chart-container:hover {
-        box-shadow: var(--shadow-md);
-        border-color: rgba(102, 126, 234, 0.2);
-    }
-    
-    /* === COMPREHENSIVE MOBILE RESPONSIVENESS === */
-    @media (max-width: 768px) {
-        .main .block-container {
-            padding: 16px;
-            margin: 10px;
-            max-width: 100%;
-        }
-        
-        .metric-card {
-            padding: 16px;
-            margin: 8px 0;
-        }
-        
-        .metric-card [data-testid="metric-value"] {
-            font-size: 1.8rem !important;
-        }
-        
-        .trading-level-card {
-            padding: 16px;
-            margin: 6px 0;
-        }
-        
-        .trading-level-card div:first-child {
-            font-size: 0.7rem !important;
-        }
-        
-        .trading-level-card div:nth-child(2) {
-            font-size: 1.4rem !important;
-        }
-        
-        .stButton > button {
-            padding: 12px 20px !important;
-            font-size: 12px !important;
-            width: 100% !important;
-        }
-        
-        .chart-container {
-            padding: 16px;
-            margin: 15px 0;
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            padding: 10px 12px;
-            font-size: 11px;
-        }
-        
-        [data-testid="metric-container"] {
-            padding: 16px;
-            margin: 8px 0;
-        }
-    }
-    
-    @media (max-width: 480px) {
-        .main .block-container {
-            padding: 12px;
-            margin: 5px;
-        }
-        
-        .metric-card {
-            padding: 12px;
-        }
-        
-        .trading-level-card {
-            padding: 12px;
-        }
-        
-        .stButton > button {
-            padding: 10px 16px !important;
-            font-size: 11px !important;
-        }
-    }
-    
-    /* === ENHANCED STATUS INDICATORS === */
-    .status-indicator {
-        display: inline-flex;
-        align-items: center;
-        padding: 8px 16px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .status-indicator::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 8px;
-        height: 100%;
-        background: currentColor;
-        opacity: 0.3;
-    }
-    
-    .status-live {
-        background: rgba(56, 161, 105, 0.2);
-        color: var(--accent-green);
-        border: 1px solid var(--accent-green);
-    }
-    
-    .status-demo {
-        background: rgba(214, 158, 46, 0.2);
-        color: var(--accent-gold);
-        border: 1px solid var(--accent-gold);
-    }
-    
-    .status-offline {
-        background: rgba(229, 62, 62, 0.2);
-        color: var(--accent-red);
-        border: 1px solid var(--accent-red);
-    }
-    
-    /* === ENHANCED TABS === */
-    .stTabs [data-baseweb="tab-list"] {
-        background: var(--secondary-bg);
-        border-radius: var(--border-radius-md);
-        padding: 6px;
-        margin-bottom: 24px;
-        border: 1px solid var(--border-color);
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: var(--border-radius-sm);
-        color: var(--text-muted);
-        font-weight: 600;
-        padding: 12px 20px;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        border: none;
-        font-size: 13px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .stTabs [data-baseweb="tab"]::before {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 0;
-        height: 2px;
-        background: var(--gradient-primary);
-        transition: width 0.3s ease;
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover {
-        background: var(--accent-bg);
-        color: var(--text-secondary);
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover::before {
-        width: 100%;
-    }
-    
-    .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background: var(--gradient-primary);
-        color: var(--text-primary);
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .stTabs [data-baseweb="tab"][aria-selected="true"]::before {
-        width: 100%;
-    }
-    
-    /* === ENHANCED METRIC COMPONENTS === */
-    [data-testid="metric-container"] {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius-md);
-        padding: 20px;
-        box-shadow: var(--shadow-sm);
-        transition: all 0.3s ease;
-        position: relative;
-    }
-    
-    [data-testid="metric-container"]:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-md);
-        border-color: rgba(102, 126, 234, 0.3);
-    }
-    
-    [data-testid="metric-container"] label {
-        color: var(--text-muted) !important;
-        font-size: 12px !important;
-        font-weight: 500 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-    }
-    
-    [data-testid="metric-container"] [data-testid="metric-value"] {
-        color: var(--text-primary) !important;
-        font-size: 28px !important;
-        font-weight: 700 !important;
-        font-family: 'JetBrains Mono', monospace !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    
-def create_professional_header():
-    """Enhanced professional trading app header"""
-    st.markdown(f"""
-    <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-sm); transition: all 0.3s ease;">
-        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center;">
-                <div style="font-size: 2.5rem; margin-right: 20px; animation: pulse 2s infinite;">🚀</div>
-                <div>
-                    <h1 style="margin: 0; font-size: 2.2rem; font-weight: 800; color: #ffffff; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
-                        AI TRADING EDUCATION PLATFORM
-                    </h1>
-                    <p style="margin: 5px 0 0 0; color: #a0aec0; font-size: 1rem; font-weight: 500;">
-                        Learn AI Analytics • Practice Trading Concepts • Educational Simulations
-                    </p>
-                </div>
-            </div>
-            <div style="display: flex; flex-direction: column; align-items: end;">
-                <div class="status-indicator {'status-live' if st.session_state.subscription_tier == 'premium' else 'status-demo'}">
-                    {'Learning Mode' if st.session_state.subscription_tier == 'premium' else 'Demo Mode'}
-                </div>
-                <div style="font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px;">
-                    Educational Platform - Not For Real Trading
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-def create_professional_status_bar():
-    """Enhanced professional status indicators with animations"""
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        market_status = "OPEN" if is_market_open() else "CLOSED"
-        status_class = "status-live" if market_status == "OPEN" else "status-offline"
-        st.markdown(f"""
-        <div class="status-indicator {status_class}" style="width: 100%; justify-content: center;">
-            <span style="margin-right: 8px;">📊</span>
-            MARKET {market_status}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        backend_status = "LIVE" if BACKEND_AVAILABLE else "DEMO"
-        backend_class = "status-live" if BACKEND_AVAILABLE else "status-demo"
-        st.markdown(f"""
-        <div class="status-indicator {backend_class}" style="width: 100%; justify-content: center;">
-            <span style="margin-right: 8px;">⚡</span>
-            BACKEND {backend_status}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        api_status = "CONNECTED" if FMP_API_KEY else "SIMULATED"
-        api_class = "status-live" if FMP_API_KEY else "status-demo"
-        st.markdown(f"""
-        <div class="status-indicator {api_class}" style="width: 100%; justify-content: center;">
-            <span style="margin-right: 8px;">🌐</span>
-            DATA {api_status}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        model_count = len(st.session_state.get('selected_models', []))
-        st.markdown(f"""
-        <div class="status-indicator status-live" style="width: 100%; justify-content: center;">
-            <span style="margin-right: 8px;">🤖</span>
-            {model_count} AI MODELS
-        </div>
-        """, unsafe_allow_html=True)
-
-def create_professional_metrics_grid(prediction: Dict):
-    """Create professional metrics display with enhanced styling"""
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    confidence = prediction.get('confidence', 0)
-    price_change_pct = prediction.get('price_change_pct', 0)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 16px;">
-                <div style="font-size: 0.8rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                    CURRENT PRICE
-                </div>
-                <div style="width: 8px; height: 8px; background: #38a169; border-radius: 50%; margin-left: auto;"></div>
-            </div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #ffffff; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                ${current_price:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 500; color: #3182ce;">
-                LIVE MARKET DATA
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        change_color = "#38a169" if price_change_pct >= 0 else "#e53e3e"
-        change_icon = "↗" if price_change_pct >= 0 else "↘"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 16px;">
-                <div style="font-size: 0.8rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                    AI PREDICTION
-                </div>
-                <div style="font-size: 1.2rem; color: {change_color};">{change_icon}</div>
-            </div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #ffffff; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                ${predicted_price:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; color: {change_color};">
-                {price_change_pct:+.2f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        confidence_color = "#38a169" if confidence > 75 else "#d69e2e" if confidence > 50 else "#e53e3e"
-        confidence_level = "HIGH" if confidence > 75 else "MEDIUM" if confidence > 50 else "LOW"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 16px;">
-                <div style="font-size: 0.8rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                    CONFIDENCE
-                </div>
-                <div style="width: 8px; height: 8px; background: {confidence_color}; border-radius: 50%;"></div>
-            </div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #ffffff; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                {confidence:.0f}%
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; color: {confidence_color};">
-                {confidence_level} CONFIDENCE
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        risk_score = min(10, max(1, abs(price_change_pct) * 2))
-        risk_level = "LOW" if risk_score < 4 else "MEDIUM" if risk_score < 7 else "HIGH"
-        risk_color = "#38a169" if risk_level == "LOW" else "#d69e2e" if risk_level == "MEDIUM" else "#e53e3e"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 16px;">
-                <div style="font-size: 0.8rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                    RISK SCORE
-                </div>
-                <div style="font-size: 1.2rem; color: {risk_color};">⚠</div>
-            </div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: #ffffff; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;">
-                {risk_score:.1f}/10
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; color: {risk_color};">
-                {risk_level} RISK
-            </div>
-        </div>
-        """, unsafe_allow_html=True)        
-
-
-def create_unified_header():
-    """Professional header with modern styling"""
-    create_professional_header()
-    create_professional_status_bar()
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    
 def create_professional_footer():
-    """Create professional footer with Educational Focus"""
-    st.markdown("""
-    <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--border-radius-md); padding: 24px; margin-top: 40px; text-align: center;">
-        <div style="display: flex; justify-content: center; gap: 40px; margin-bottom: 16px; flex-wrap: wrap;">
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; font-weight: 700; color: #38a169;">OPERATIONAL</div>
-                <div style="font-size: 0.8rem; color: #718096; text-transform: uppercase; letter-spacing: 0.5px;">System Status</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; font-weight: 700; color: #3182ce;">8 MODELS</div>
-                <div style="font-size: 0.8rem; color: #718096; text-transform: uppercase; letter-spacing: 0.5px;">AI Systems</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; font-weight: 700; color: #38a169;">REAL-TIME</div>
-                <div style="font-size: 0.8rem; color: #718096; text-transform: uppercase; letter-spacing: 0.5px;">Data Feed</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.1rem; font-weight: 700; color: #805ad5;">SECURE</div>
-                <div style="font-size: 0.8rem; color: #718096; text-transform: uppercase; letter-spacing: 0.5px;">Connection</div>
-            </div>
-        </div>
-        <div style="border-top: 1px solid var(--border-color); padding-top: 16px; color: #a0aec0; font-size: 0.9rem;">
-            <strong style="background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-                AI TRADING EDUCATION CENTER
-            </strong> - Learn Financial AI & Machine Learning Concepts • Practice Trading Strategies • Simulated Environments<br>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def create_modern_metrics_grid(prediction: Dict):
-    """Create modern metrics grid with glassmorphism cards"""
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    confidence = prediction.get('confidence', 0)
-    price_change_pct = prediction.get('price_change_pct', 0)
+    """Create professional footer with system information"""
+    st.markdown("---")
     
-    # Calculate risk score (simplified)
-    risk_score = max(1, min(10, abs(price_change_pct) * 2))
-    risk_level = "Low" if risk_score < 4 else "Medium" if risk_score < 7 else "High"
+    footer_cols = st.columns([3, 2])
     
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color: #718096; margin-bottom: 8px; font-weight: 500;">
-                Current Price
-            </div>
-            <div style="font-size: 2rem; font-weight: 700; color: #2d3748; margin-bottom: 5px;">
-                ${current_price:.2f}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600; color: #667eea;">
-                Live Market Data
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        change_color = "#48bb78" if price_change_pct >= 0 else "#f56565"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color: #718096; margin-bottom: 8px; font-weight: 500;">
-                AI Prediction
-            </div>
-            <div style="font-size: 2rem; font-weight: 700; color: #2d3748; margin-bottom: 5px;">
-                ${predicted_price:.2f}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600; color: {change_color};">
-                {price_change_pct:+.2f}%
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        confidence_color = "#48bb78" if confidence > 70 else "#ed8936" if confidence > 50 else "#f56565"
-        confidence_level = "High" if confidence > 70 else "Medium" if confidence > 50 else "Low"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color: #718096; margin-bottom: 8px; font-weight: 500;">
-                AI Confidence
-            </div>
-            <div style="font-size: 2rem; font-weight: 700; color: #2d3748; margin-bottom: 5px;">
-                {confidence:.1f}%
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600; color: {confidence_color};">
-                {confidence_level}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        risk_color = "#48bb78" if risk_level == "Low" else "#ed8936" if risk_level == "Medium" else "#f56565"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div style="font-size: 0.9rem; color: #718096; margin-bottom: 8px; font-weight: 500;">
-                Risk Score
-            </div>
-            <div style="font-size: 2rem; font-weight: 700; color: #2d3748; margin-bottom: 5px;">
-                {risk_score:.1f}/10
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600; color: {risk_color};">
-                {risk_level} Risk
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def create_modern_chart_container(title: str, chart_obj=None):
-    """Create professional chart container"""
-    st.markdown(f"""
-    <div class="chart-container">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div style="font-size: 1.4rem; font-weight: 600; color: #ffffff;">
-                📊 {title}
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <button style="padding: 8px 16px; border: 2px solid #667eea; background: #667eea; color: white; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                    Price
-                </button>
-                <button style="padding: 8px 16px; border: 2px solid #2d3748; background: #1a2332; color: #a0aec0; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                    Volume
-                </button>
-                <button style="padding: 8px 16px; border: 2px solid #2d3748; background: #1a2332; color: #a0aec0; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
-                    Risk
-                </button>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    if chart_obj:
-        st.plotly_chart(chart_obj, use_container_width=True)
-    else:
-        st.markdown("""
-        <div style="height: 300px; background: linear-gradient(135deg, #141b2e, #1a2332); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: #a0aec0; font-size: 1.1rem; border: 2px dashed #2d3748;">
-            <div style="text-align: center;">
-                <div style="font-size: 3rem; margin-bottom: 15px; color: #667eea;">📈</div>
-                <div style="color: #ffffff; font-weight: 600;">Interactive AI Analysis Chart</div>
-                <div style="font-size: 0.9rem; margin-top: 10px; color: #718096;">Price Prediction • Confidence Bands • Risk Indicators</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def create_modern_risk_indicators(risk_metrics: Dict):
-    """Create modern risk indicator grid"""
-    if not risk_metrics:
-        return
-    
-    st.markdown("### 🛡️ Advanced Risk Analysis")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    # VaR indicator
-    var_95 = risk_metrics.get('var_95', 0)
-    var_class = "risk-low" if abs(var_95) < 0.02 else "risk-medium" if abs(var_95) < 0.04 else "risk-high"
-    
-    with col1:
-        st.markdown(f"""
-        <div class="risk-indicator {var_class}">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 5px;">
-                {var_95:.1%}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600;">
-                VaR (95%)
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Sharpe Ratio
-    sharpe = risk_metrics.get('sharpe_ratio', 0)
-    sharpe_class = "risk-low" if sharpe > 1.5 else "risk-medium" if sharpe > 1.0 else "risk-high"
-    
-    with col2:
-        st.markdown(f"""
-        <div class="risk-indicator {sharpe_class}">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 5px;">
-                {sharpe:.2f}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600;">
-                Sharpe Ratio
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Max Drawdown
-    max_dd = risk_metrics.get('max_drawdown', 0)
-    dd_class = "risk-low" if abs(max_dd) < 0.1 else "risk-medium" if abs(max_dd) < 0.2 else "risk-high"
-    
-    with col3:
-        st.markdown(f"""
-        <div class="risk-indicator {dd_class}">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 5px;">
-                {max_dd:.1%}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600;">
-                Max Drawdown
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Volatility
-    vol = risk_metrics.get('volatility', 0)
-    vol_class = "risk-low" if vol < 0.2 else "risk-medium" if vol < 0.4 else "risk-high"
-    
-    with col4:
-        st.markdown(f"""
-        <div class="risk-indicator {vol_class}">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 5px;">
-                {vol:.1%}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600;">
-                Volatility
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Sortino Ratio
-    sortino = risk_metrics.get('sortino_ratio', 0)
-    sortino_class = "risk-low" if sortino > 1.5 else "risk-medium" if sortino > 1.0 else "risk-high"
-    
-    with col5:
-        st.markdown(f"""
-        <div class="risk-indicator {sortino_class}">
-            <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 5px;">
-                {sortino:.2f}
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 600;">
-                Sortino Ratio
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def create_modern_trading_plan(prediction: Dict):
-    """Create modern trading plan display"""
-    current_price = prediction.get('current_price', 0)
-    predicted_price = prediction.get('predicted_price', 0)
-    
-    # Calculate price levels
-    is_bullish = predicted_price > current_price
-    price_change = abs(predicted_price - current_price)
-    
-    if is_bullish:
-        entry = current_price
-        target1 = current_price + price_change * 0.6
-        target2 = current_price + price_change * 1.0
-        target3 = current_price + price_change * 1.6
-        stop_loss = current_price - price_change * 0.4
-    else:
-        entry = current_price
-        target1 = current_price - price_change * 0.6
-        target2 = current_price - price_change * 1.0
-        target3 = current_price - price_change * 1.6
-        stop_loss = current_price + price_change * 0.4
-    
-    st.markdown("### 🎯 Professional Trading Plan")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #ebf8ff, #bee3f8); border: 2px solid #4299e1;">
-            <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 5px; color: #2b6cb0;">
-                ${entry:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #2b6cb0;">
-                ENTRY
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #f0fff4, #c6f6d5); border: 2px solid #48bb78;">
-            <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 5px; color: #2f855a;">
-                ${target1:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #2f855a;">
-                TARGET 1
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #f0fff4, #c6f6d5); border: 2px solid #48bb78;">
-            <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 5px; color: #2f855a;">
-                ${target2:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #2f855a;">
-                TARGET 2
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #f0fff4, #c6f6d5); border: 2px solid #48bb78;">
-            <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 5px; color: #2f855a;">
-                ${target3:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #2f855a;">
-                TARGET 3
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col5:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #fff5f5, #fed7d7); border: 2px solid #f56565;">
-            <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 5px; color: #c53030;">
-                ${stop_loss:.2f}
-            </div>
-            <div style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #c53030;">
-                STOP LOSS
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def create_modern_footer():
-    """Create modern footer with system status"""
-    st.markdown("""
-    <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255, 255, 255, 0.2); text-align: center; color: white; margin-top: 30px;">
-        <div style="display: flex; justify-content: center; gap: 40px; margin-bottom: 15px; flex-wrap: wrap;">
-            <div style="text-align: center;">
-                <div style="font-size: 1.2rem; font-weight: 700;">🟢 OPERATIONAL</div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Backend Status</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.2rem; font-weight: 700;">6 MODELS</div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">AI Systems</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.2rem; font-weight: 700;">🟢 ACTIVE</div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Real-time Data</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.2rem; font-weight: 700;">UNLIMITED</div>
-                <div style="font-size: 0.9rem; opacity: 0.8;">Predictions</div>
-            </div>
-        </div>
-        <div style="opacity: 0.8;">
-            <strong>🔥 FULLY INTEGRATED</strong> - Advanced AI Trading System with Complete Backend Integration
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def create_enhanced_prediction_section_modern():
-    """Enhanced prediction section with modern styling"""
-    # Apply modern styling first
-    apply_modern_dashboard_styling()
-    
-    # Create modern header
-    create_modern_header()
-    
-    st.markdown("### 🧠 AI Prediction Engine")
-    
-    ticker = st.session_state.selected_ticker
-    asset_type = get_asset_type(ticker)
-    
-    # Asset information with modern cards
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #667eea15, #764ba215); border: 2px solid #667eea; border-radius: 12px; padding: 15px; text-align: center;">
-            <strong style="color: #667eea;">Asset:</strong><br>
-            <span style="font-size: 1.2rem; font-weight: 600;">{ticker}</span>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #48bb7815, #38a16915); border: 2px solid #48bb78; border-radius: 12px; padding: 15px; text-align: center;">
-            <strong style="color: #48bb78;">Type:</strong><br>
-            <span style="font-size: 1.2rem; font-weight: 600;">{asset_type.title()}</span>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        if ticker in st.session_state.real_time_prices:
-            price = st.session_state.real_time_prices[ticker]
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #ed893615, #dd673015); border: 2px solid #ed8936; border-radius: 12px; padding: 15px; text-align: center;">
-                <strong style="color: #ed8936;">Price:</strong><br>
-                <span style="font-size: 1.2rem; font-weight: 600;">${price:.4f}</span>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Premium status and controls
-    if st.session_state.subscription_tier == 'premium':
-        premium_key = st.session_state.premium_key
-        key_status = PremiumKeyManager.get_key_status(premium_key)
+    with footer_cols[0]:
+        st.markdown("### 🚀 AI Trading Professional")
+        st.markdown("**Fully Integrated Backend System**")
+        st.markdown("© 2024 AI Trading Professional. All rights reserved.")
         
-        if key_status['key_type'] == 'master':
-            st.success("✅ Master Premium Active - Unlimited Predictions")
-            # Show all buttons for master key
-            col1, col2, col3 = st.columns([3, 1, 1])
-            
-            with col1:
-                predict_button = st.button("🎯 Generate AI Prediction", type="primary")
-            with col2:
-                cv_button = st.button("📊 Cross-Validate")
-            with col3:
-                backtest_button = st.button("📈 Backtest")
-        else:
-            clicks_remaining = key_status.get('clicks_remaining', 0)
-            if clicks_remaining > 0:
-                st.success(f"✅ Premium Active - {clicks_remaining} predictions remaining")
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    predict_button = st.button("🎯 Generate AI Prediction", type="primary")
-                with col2:
-                    backtest_button = st.button("📈 Backtest")
-                cv_button = False
+        # Feature count
+        total_features = len([
+            "Real-time Predictions", "6 AI Models", 
+            "SHAP Explanations", "Market Regime Detection",
+            "Model Drift Detection", "Portfolio Optimization", "Alternative Data",
+            "Advanced Backtesting", "Multi-timeframe Analysis", "Options Flow"
+        ])
+        
+        st.markdown(f"**{total_features} Advanced Features Integrated**")
+    
+    with footer_cols[1]:
+        st.markdown("#### 🔧 System Status")
+        
+        # System health indicators
+        health_items = [
+            ("Backend", "🟢 OPERATIONAL" if BACKEND_AVAILABLE else "🟡 SIMULATION"),
+            ("AI Models", f"🟢 {len(advanced_app_state.get_available_models())} MODELS"),
+            ("Real-time Data", "🟢 ACTIVE" if FMP_API_KEY else "🟡 SIMULATED"),
+            ("Cross-Validation", "🟢 ENABLED" if st.session_state.subscription_tier == 'premium' else "🟡 LIMITED"),
+            ("Risk Analytics", "🟢 ADVANCED" if st.session_state.subscription_tier == 'premium' else "🟡 BASIC")
+        ]
+        
+        for label, status in health_items:
+            st.markdown(f"**{label}:** {status}")
+        
+        # Last update
+        if st.session_state.last_update:
+            time_since = datetime.now() - st.session_state.last_update
+            if time_since.seconds < 60:
+                update_text = f"{time_since.seconds}s ago"
+            elif time_since.seconds < 3600:
+                update_text = f"{time_since.seconds // 60}m ago"
             else:
-                st.error("❌ Premium key exhausted")
-                return
-    else:
-        predict_button = st.button("🎯 Generate AI Prediction", type="primary")
-        cv_button = False
-        backtest_button = False
+                update_text = st.session_state.last_update.strftime('%H:%M')
+            
+            st.markdown(f"**Last Update:** {update_text}")
     
-    # Handle button clicks (keep existing logic)
-    if predict_button:
-        # Your existing prediction logic here...
-        with st.spinner("🔄 Running advanced AI analysis..."):
-            prediction = RealPredictionEngine.run_real_prediction(ticker)
-            if prediction:
-                st.session_state.current_prediction = prediction
-                
-                # Display results with modern styling
-                create_modern_metrics_grid(prediction)
-                
-                # Create modern chart
-                chart = EnhancedChartGenerator.create_comprehensive_prediction_chart(prediction)
-                create_modern_chart_container("Comprehensive AI Analysis", chart)
-                
-                # Enhanced tabs with modern styling
-                tabs = st.tabs(["📈 Forecast", "📋 Trading Plan", "⚠️ Risk Analysis"])
-                
-                with tabs[0]:
-                    display_enhanced_forecast_tab(prediction)
-                
-                with tabs[1]:
-                    create_modern_trading_plan(prediction)
-                
-                with tabs[2]:
-                    risk_metrics = prediction.get('enhanced_risk_metrics', {})
-                    if risk_metrics:
-                        create_modern_risk_indicators(risk_metrics)
+    # Integration status banner
+    integration_status = "🔥 FULLY INTEGRATED" if BACKEND_AVAILABLE else "⚡ SIMULATION MODE"
+    integration_color = "#28a745" if BACKEND_AVAILABLE else "#fd7e14"
     
-    # Add modern footer
-    create_modern_footer()
-
+    st.markdown(
+        f'<div style="text-align:center;padding:20px;margin:20px 0;'
+        f'background:linear-gradient(135deg, {integration_color}15, {integration_color}25);'
+        f'border:2px solid {integration_color};border-radius:10px">'
+        f'<h2 style="color:{integration_color};margin:0">{integration_status}</h2>'
+        f'<p style="margin:10px 0 0 0;color:#666">Advanced AI Trading System with Complete Backend Integration</p>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
 # =============================================================================
 # MAIN APPLICATION WITH FULL BACKEND INTEGRATION
@@ -8883,47 +7586,58 @@ def initialize_app_components():
         st.error(f"Initialization Error: {e}")
         return None, None
 
-
 def configure_page():
     """
     Configure Streamlit page settings.
     """
     st.set_page_config(
-        page_title="AI Trading Education Platform",
+        page_title="AI Trading Professional - Enhanced",
         page_icon="🚀",
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
-
 def create_sidebar(advanced_app_state):
-    """
-    Create the entire sidebar with all sections
-    
-    Args:
-        advanced_app_state (AdvancedAppState): The advanced app state object
-    """
+    """Create sidebar - Premium only"""
     with st.sidebar:
-        # Subscription Management Section
-        st.header("🔑 Subscription Management")
+        st.header("🔑 Premium Access")
         
         if st.session_state.subscription_tier == 'premium':
             _create_premium_sidebar(advanced_app_state)
         else:
-            _create_free_tier_sidebar(advanced_app_state)
+            # Show premium key entry only
+            st.warning("⚠️ **PREMIUM ACCESS REQUIRED**")
+            st.markdown("This is a premium-only application.")
+            
+            premium_key = st.text_input(
+                "Enter Premium Key",
+                type="password",
+                value=st.session_state.get('premium_key', ''),
+                help="Enter your premium key to access all features"
+            )
+            
+            if st.button("🚀 Activate Premium", type="primary"):
+                success = advanced_app_state.update_subscription(premium_key)
+                if success:
+                    st.success("Premium activated! Refreshing...")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Invalid premium key")
+                    
+            # Stop execution until premium is activated
+            st.stop()        
         
-        # Asset Selection Section
-        st.markdown("---")
-        st.header("📈 Asset Selection")
-        _create_asset_selection_sidebar()
-        
-        # System Statistics Section
-        st.markdown("---")
-        st.header("📊 Session Statistics")
-        _create_system_statistics_sidebar()
-        
-        # Additional Premium Features (if applicable)
+        # Only show other sections if premium
         if st.session_state.subscription_tier == 'premium':
+            st.markdown("---")
+            st.header("📈 Asset Selection")
+            _create_asset_selection_sidebar()
+            
+            st.markdown("---")
+            st.header("📊 Session Statistics")
+            _create_system_statistics_sidebar()
+            
             st.markdown("---")
             st.header("🔄 Real-time Status")
             _create_premium_realtime_status()
@@ -8953,31 +7667,10 @@ def create_sidebar(advanced_app_state):
                 elif daily_risk > 60 or total_risk > 70:
                     st.warning("⚠️ Moderate Risk")
                 else:
-                    st.success("✅ Low Risk")
-
+                    st.success("✅ Low Risk")   
 
 def _create_premium_sidebar(advanced_app_state):
     """Create sidebar content for premium tier with click tracking"""
-    st.markdown("""
-    <style>
-    .sidebar-section {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius-md);
-        padding: 20px;
-        margin: 15px 0;
-        box-shadow: var(--shadow-sm);
-    }
-    .sidebar-title {
-        color: var(--text-primary);
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
     
     premium_key = st.session_state.premium_key
     key_status = PremiumKeyManager.get_key_status(premium_key)
@@ -9052,124 +7745,6 @@ def _create_premium_sidebar(advanced_app_state):
         st.rerun()
 
 
-def _create_free_tier_sidebar(advanced_app_state):
-    """
-    Create sidebar content for free tier with proper disclaimer handling.
-    """
-    st.markdown("""
-    <style>
-    .sidebar-section {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius-md);
-        padding: 20px;
-        margin: 15px 0;
-        box-shadow: var(--shadow-sm);
-    }
-    .sidebar-title {
-        color: var(--text-primary);
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Initialize disclaimer consent state if not exists
-    if 'disclaimer_consented' not in st.session_state:
-        st.session_state.disclaimer_consented = False
-
-    # Always show disclaimer if not consented - BLOCK ALL OTHER CONTENT
-    if not st.session_state.disclaimer_consented:
-        # Large, attention-grabbing disclaimer
-        st.markdown("""
-        ## 📚 EDUCATIONAL PLATFORM DISCLAIMER
-
-        ### IMPORTANT: LEARNING TOOL ONLY
-
-        ⚠️ **By using this educational platform, you acknowledge:**
-
-        1. 📊 **Educational Purpose**: 
-           - This is a LEARNING TOOL for understanding AI trading concepts
-           - NOT for real trading or investment decisions
-
-        2. 🎓 **Academic Use**: 
-           - Designed for educational and research purposes
-           - Simulated data and predictions for learning
-
-        3. 🔮 **No Investment Advice**: 
-           - No real financial recommendations provided
-           - All outputs are for educational demonstration
-
-        4. 🧠 **AI Learning**: 
-           - Demonstrates AI/ML concepts and limitations
-           - Shows how algorithms process financial data
-
-        5. 👤 **Educational Responsibility**: 
-           - Use responsibly for learning purposes
-           - Do not use for actual trading decisions
-        """)
-        
-        # CONSENT REQUIRED TO PROCEED
-        
-        # Consent mechanism - centered and prominent
-        st.markdown("---")
-        
-        consent_col1, consent_col2 = st.columns(2)
-        
-        with consent_col1:
-            if st.button(
-                "✅ I FULLY UNDERSTAND & CONSENT", 
-                key="disclaimer_consent_sidebar", 
-                type="primary",
-                help="Confirm you've read and understand all risks",
-                use_container_width=True
-            ):
-                st.session_state.disclaimer_consented = True
-                st.success("✅ Consent recorded. You may now use the platform.")
-                time.sleep(1)
-                st.rerun()
-        
-        with consent_col2:
-            if st.button(
-                "❌ I DO NOT CONSENT", 
-                key="disclaimer_decline_sidebar", 
-                type="secondary",
-                help="Exit if you do not agree to the terms",
-                use_container_width=True
-            ):
-                st.error("❌ Access denied. You must consent to use the platform.")
-                st.stop()
-        
-        # CRITICAL: Stop all further execution if not consented
-        st.stop()
-
-    # Only show premium activation AFTER consent
-    st.info("ℹ️ **FREE TIER ACTIVE**")
-    usage = st.session_state.daily_usage.get('predictions', 0)
-    st.markdown(f"**Daily Usage:** {usage}/10 predictions")
-    
-    premium_key = st.text_input(
-        "Enter Premium Key",
-        type="password",
-        value=st.session_state.get('premium_key', ''),
-        key="sidebar_premium_key_input",
-        help="Enter 'Prem246_357' for full access"
-    )
-    
-    if st.button("🚀 Activate Premium", type="primary", key="activate_premium_button"):
-        success = advanced_app_state.update_subscription(premium_key)
-        
-        if success:
-            st.success("Premium activated successfully!")
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.error("Invalid premium key")
-
-
 def _create_asset_selection_sidebar():
     """
     Create asset selection sidebar section.
@@ -9180,49 +7755,36 @@ def _create_asset_selection_sidebar():
         '₿ Cryptocurrencies': ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD'],
         '💱 Forex': ['USDJPY']
     }
-
-    category = st.selectbox(
-        "Asset Category",
-        options=list(ticker_categories.keys()),
-        key="enhanced_category_select"
-    )
-
-    available_tickers = ticker_categories[category]
-    if st.session_state.subscription_tier == 'free':
-        available_tickers = available_tickers[:3]  # Limit for free tier
-
-    ticker = st.selectbox(
-        "Select Asset",
-        options=available_tickers,
-        key="enhanced_ticker_select",
-        help=f"Asset type: {get_asset_type(available_tickers[0]) if available_tickers else 'unknown'}"
-    )
-
+    
+    category = st.selectbox("Asset Category", options=list(ticker_categories.keys()))
+    available_tickers = ticker_categories[category]  # No limitations
+    
+    ticker = st.selectbox("Select Asset", options=available_tickers)
+    
     if ticker != st.session_state.selected_ticker:
         st.session_state.selected_ticker = ticker
-
+    
     # Timeframe selection
     timeframe_options = ['1day']
     if st.session_state.subscription_tier == 'premium':
         timeframe_options = ['15min', '1hour', '4hour', '1day']
-
+    
     timeframe = st.selectbox(
         "Analysis Timeframe",
         options=timeframe_options,
         index=timeframe_options.index('1day'),
         key="enhanced_timeframe_select"
     )
-
+    
     if timeframe != st.session_state.selected_timeframe:
         st.session_state.selected_timeframe = timeframe
-
 
 def _create_system_statistics_sidebar():
     """
     Create system statistics sidebar section.
     """
     stats = st.session_state.session_stats
-
+    
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Predictions", stats.get('predictions', 0))
@@ -9230,7 +7792,6 @@ def _create_system_statistics_sidebar():
     with col2:
         st.metric("Backtests", stats.get('backtests', 0))
         st.metric("CV Runs", stats.get('cv_runs', 0))
-
 
 def _create_premium_realtime_status():
     """
@@ -9244,7 +7805,7 @@ def _create_premium_realtime_status():
         st.markdown(f"**Last Update:** {last_update.strftime('%H:%M:%S')}")
     else:
         st.markdown("**Data Stream:** 🔴 OFFLINE")
-
+    
     if st.button("🔄 Refresh Data"):
         # Force data refresh
         if BACKEND_AVAILABLE and hasattr(st.session_state, 'data_manager') and st.session_state.data_manager:
@@ -9261,144 +7822,171 @@ def _create_premium_realtime_status():
                 st.error(f"Error refreshing data: {e}")
         else:
             st.warning("Backend data manager not available")
-
-
-def create_main_content_fixed():
-    """Fixed main content creation with proper error handling"""
-    try:
-        # Check disclaimer consent
-        if not st.session_state.get('disclaimer_consented', False):
-            show_disclaimer_warning()
-            return
-
-        # Mobile optimizations
-        is_mobile = is_mobile_device()
-        apply_mobile_optimizations()
-
-        # Determine available tabs based on subscription
-        subscription_tier = st.session_state.get('subscription_tier', 'free')
-        premium_key = st.session_state.get('premium_key', '')
-
-        if subscription_tier == 'premium':
-            has_master_key = (premium_key == PremiumKeyManager.MASTER_KEY)
-            create_premium_tabs(has_master_key)
-        else:
-            create_free_tabs()
-
-        # Update data and show footer
-        update_real_time_data()
-        create_professional_footer()
-
-    except Exception as e:
-        st.error(f"Error creating main content: {e}")
-        logger.error(f"Main content error: {e}")
-
-
-def show_disclaimer_warning():
-    """Show disclaimer warning when consent is required"""
-    st.markdown(
-        """
-        <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #ff6b6b, #ee5a24);color:white;border-radius:15px;margin:20px 0">
-            <h1>🚨 DISCLAIMER CONSENT REQUIRED</h1>
-            <h3>Please read and accept the risk disclaimer in the sidebar to proceed</h3>
-            <p>All features are disabled until you provide consent</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-def create_premium_tabs(has_master_key):
-    """Create tabs for educational users"""
+            
+            
+def create_main_content():
+    """Create main content - Premium only"""
+    
+    # CHECK DISCLAIMER CONSENT
+    if not st.session_state.get('disclaimer_consented', False):
+        show_disclaimer_screen()
+        return
+    
+    # CHECK PREMIUM STATUS
+    if st.session_state.subscription_tier != 'premium':
+        show_premium_required_screen()
+        return
+    
+    # Mobile and performance optimizations
+    is_mobile = is_mobile_device()
+    device_type = get_device_type()
+    
+    # Create mobile-specific managers with proper functionality
+    mobile_config_manager = create_mobile_config_manager(is_mobile)
+    mobile_performance_optimizer = create_mobile_performance_optimizer(is_mobile)
+    
+    # Apply mobile optimizations
+    apply_mobile_optimizations()
+    
+    # Use mobile config for conditional rendering
+    if is_mobile:
+        chart_height = mobile_config_manager.get_config('chart_height')
+        columns_per_row = mobile_config_manager.get_config('columns_per_row')
+    else:
+        chart_height = 500
+        columns_per_row = 3
+    
+    # Enhanced dashboard styling
+    create_enhanced_dashboard_styling()
+    
+    # Check if user has master key
+    has_master_key = (st.session_state.subscription_tier == 'premium' and 
+                     st.session_state.premium_key == PremiumKeyManager.MASTER_KEY)
+         
     if has_master_key:
+        # Master key user gets admin panel AND FTMO dashboard
         tabs = st.tabs([
             "AI Prediction", 
             "Advanced Analytics", 
             "Portfolio Management", 
             "Backtesting",
             "FTMO Dashboard",
-            "MT5 Integration",
             "Admin Panel"
         ])
         
-        with tabs[0]: create_enhanced_prediction_section()
-        with tabs[1]: create_advanced_analytics_section()
-        with tabs[2]: create_portfolio_management_section()
-        with tabs[3]: create_backtesting_section()
-        with tabs[4]: create_ftmo_dashboard()
-        with tabs[5]: create_mt5_integration_tab()
-        with tabs[6]: create_admin_panel()
+        with tabs[0]:
+            create_enhanced_prediction_section()
+        with tabs[1]:
+            create_advanced_analytics_section()
+        with tabs[2]:
+            create_portfolio_management_section()
+        with tabs[3]:
+            create_backtesting_section()
+        with tabs[4]:
+            create_ftmo_dashboard()
+        with tabs[5]:
+            create_admin_panel()
     else:
+        # Regular premium users get FTMO dashboard but no admin panel
         tabs = st.tabs([
-            "📚 AI Learning Lab", 
-            "📊 Analytics Tutorial", 
-            "💼 Portfolio Practice", 
-            "📈 Backtesting Simulator",
+            "AI Prediction", 
+            "Advanced Analytics", 
+            "Portfolio Management", 
+            "Backtesting",
             "FTMO Dashboard"
         ])
         
-        with tabs[0]: create_enhanced_prediction_section()
-        with tabs[1]: create_advanced_analytics_section()
-        with tabs[2]: create_portfolio_management_section()
-        with tabs[3]: create_backtesting_section()
-        with tabs[4]: create_ftmo_dashboard()
-
-
-def create_free_tabs():
-    """Create tabs for free educational users"""
-    tabs = st.tabs([
-        "📚 AI Learning Lab", 
-        "📊 Basic Concepts"
-    ])
+        with tabs[0]:
+            create_enhanced_prediction_section()
+        with tabs[1]:
+            create_advanced_analytics_section()
+        with tabs[2]:
+            create_portfolio_management_section()
+        with tabs[3]:
+            create_backtesting_section()
+        with tabs[4]:
+            create_ftmo_dashboard()
     
-    with tabs[0]: create_enhanced_prediction_section()
-    with tabs[1]: create_basic_analytics_section()
+    # Update data and show footer
+    update_real_time_data()
+    create_professional_footer()
+    
+def show_disclaimer_screen():
+    """Show disclaimer consent screen"""
+    st.markdown("""
+    <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #667eea, #764ba2);
+                color:white;border-radius:15px;margin:20px 0">
+        <h1>🚨 INVESTMENT RISK DISCLAIMER</h1>
+        <h3>Please read and acknowledge the risks before proceeding</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    ## ⚠️ CRITICAL INVESTMENT RISK WARNING
+    
+    **By using this platform, you acknowledge:**
+    
+    1. 📊 **Algorithmic Predictions**: NOT guaranteed investment recommendations
+    2. 💸 **Financial Risk**: Significant potential for capital loss
+    3. 🔮 **No Guaranteed Returns**: Past performance does NOT predict future results
+    4. 🧠 **AI Limitations**: Cannot predict unexpected market events
+    5. 👤 **Personal Responsibility**: YOU are solely responsible for ALL investment decisions
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("✅ I UNDERSTAND & CONSENT", type="primary", use_container_width=True):
+            st.session_state.disclaimer_consented = True
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ I DO NOT CONSENT", type="secondary", use_container_width=True):
+            st.error("❌ Access denied. You must consent to use the platform.")
+            st.stop()
 
+def show_premium_required_screen():
+    """Show premium required screen"""
+    st.markdown("""
+    <div style="text-align:center;padding:40px;background:linear-gradient(135deg, #667eea, #764ba2);
+                color:white;border-radius:15px;margin:20px 0">
+        <h1>🚀 Premium Access Required</h1>
+        <h3>This application requires a premium subscription</h3>
+        <p>Enter your premium key in the sidebar to access all features</p>
+    </div>
+    """, unsafe_allow_html=True)    
+    
 
 def main():
     """
-    Corrected main function with proper component initialization
+    Main function to orchestrate the AI Trading Professional application.
+    Handles initialization, page configuration, sidebar creation, 
+    and main content rendering.
     """
+    # Global declaration of advanced_app_state
     global advanced_app_state
     
-    try:
-        # 1. Page configuration (first)
-        configure_page()
-        
-        # 2. Apply ONLY the unified styling (remove any other styling calls)
-        apply_unified_dashboard_styling()
-        
-        # 3. Initialize core components
-        advanced_app_state, keep_alive_manager = initialize_app_components()
-        
-        # 4. Check initialization success
-        if advanced_app_state is None:
-            st.error("Failed to initialize application components")
-            return
-        
-        # 5. Initialize dashboard components
-        initialize_dashboard_components()
-        
-        # 6. Validate session state
-        validate_session_state()
-        
-        # 7. Create unified header (no duplicate styling)
-        create_unified_header()
-        
-        # 8. Create sidebar
-        create_sidebar(advanced_app_state)
-        
-        # 9. Create main content (use fixed version)
-        create_main_content_fixed()
-        
-        # 10. Log successful initialization
-        logger.info("✅ Dashboard fully initialized and running")
-        
-    except Exception as e:
-        st.error(f"Critical Error: {e}")
-        logger.error(f"Critical error in main(): {e}")
-        st.stop()
-
+    # Page configuration
+    configure_page()
+    
+    # Apply modern styling FIRST
+    create_enhanced_dashboard_styling()
+    
+    # Initialize core components
+    advanced_app_state, keep_alive_manager = initialize_app_components()
+    
+    # Check if initialization was successful
+    if advanced_app_state is None:
+        return
+    
+    # Use the NEW modern header instead of the old one
+    create_bright_enhanced_header()
+    
+    # Create sidebar
+    create_sidebar(advanced_app_state)
+    
+    # Create main content
+    create_main_content()
 
 # Main execution
 if __name__ == "__main__":
