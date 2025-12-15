@@ -16,11 +16,11 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port for Streamlit
-EXPOSE 8501
+# Expose port 80 for Elastic Beanstalk
+EXPOSE 80
 
-# Health check for Elastic Beanstalk
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
+# Health check for Elastic Beanstalk (use port 80)
+HEALTHCHECK CMD curl --fail http://localhost:80/_stcore/health
 
-# Run Streamlit app
-CMD ["streamlit", "run", "application.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.enableCORS=false", "--server.enableXsrfProtection=false"]
+# Run Streamlit app on port 80
+CMD ["streamlit", "run", "application.py", "--server.port=80", "--server.address=0.0.0.0", "--server.enableCORS=false", "--server.enableXsrfProtection=false"]
