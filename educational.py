@@ -321,7 +321,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Customer Key - 20 Predictions"
         },
@@ -329,7 +329,7 @@ class PremiumKeyManager:
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Elite Key - 20 Predictions"
         },
@@ -337,7 +337,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Max Key - 20 Predictions"
         },
@@ -345,7 +345,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20, 
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Ultra Key - 20 Predictions"
         },
@@ -353,7 +353,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Advanced Key - 20 Predictions"
         },
@@ -361,7 +361,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium", 
             "description": "Premium Super Key - 20 Predictions"
         },
@@ -369,7 +369,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Turbo Key - 20 Predictions"
         },
@@ -377,7 +377,7 @@ class PremiumKeyManager:
             "type": "customer", 
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Power Key - 20 Predictions"
         },
@@ -385,7 +385,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20,
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Plus Key - 20 Predictions"
         },
@@ -393,7 +393,7 @@ class PremiumKeyManager:
             "type": "customer",
             "clicks_total": 20, 
             "clicks_remaining": 20,
-            "expires": "2025-12-31",  # Updated to 2025
+            "expires": "2026-12-31",  # Updated to 2025
             "features": "all_premium",
             "description": "Premium Boost Key - 20 Predictions"
         }
@@ -7991,3 +7991,4 @@ def main():
 # Main execution
 if __name__ == "__main__":
     main()
+
